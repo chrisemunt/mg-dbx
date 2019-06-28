@@ -1,1 +1,4767 @@
+/*
+   Access to Cache and Globals from Node.js
+
+   Chris Munt
+*/
+
+
+#include "mg-dbx.h"
+#include "mg-global.h"
+
+#if !defined(_WIN32)
+extern int errno;
+#endif
+
+static int     counter                 = 0;
+int            dbx_total_tasks         = 0;
+int            dbx_request_errors      = 0;
+
+#if defined(_WIN32)
+CRITICAL_SECTION  dbx_async_mutex;
+#else
+pthread_mutex_t   dbx_async_mutex        = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t   dbx_pool_mutex         = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t   dbx_result_mutex       = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t   dbx_task_queue_mutex   = PTHREAD_MUTEX_INITIALIZER;
+
+pthread_cond_t    dbx_pool_cond           = PTHREAD_COND_INITIALIZER;
+pthread_cond_t    dbx_result_cond         = PTHREAD_COND_INITIALIZER;
+
+DBXTID            dbx_thr_id[DBX_THREADPOOL_MAX];
+pthread_t         dbx_p_threads[DBX_THREADPOOL_MAX];
+#endif
+
+struct dbx_pool_task * tasks           = NULL;
+struct dbx_pool_task * bottom_task     = NULL;
+
+
+using namespace node;
+using namespace v8;
+
+
+static void dbxGoingDownSignal(int sig)
+{
+   /* printf("\r\nNode.js process interrupted (signal=%d)", sig); */
+   exit(0);
+}
+
+#if defined(_WIN32) && defined(DBX_USE_SECURE_CRT)
+/* Compile with: /Zi /MTd */
+void dbxInvalidParameterHandler(const wchar_t* expression, const wchar_t* function, const wchar_t* file, unsigned int line, uintptr_t pReserved)
+{
+   printf("\r\nWindows Secure Function Error\r\nInvalid parameter detected in function at line %d\r\n", line);
+   /* abort(); */
+   return;
+}
+#endif
+
+
+#if defined(_WIN32)
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved)
+{
+#if defined(_WIN32) && defined(DBX_USE_SECURE_CRT)
+   _invalid_parameter_handler oldHandler, newHandler;
+#endif
+
+   switch (fdwReason)
+   { 
+      case DLL_PROCESS_ATTACH:
+#if defined(_WIN32) && defined(DBX_USE_SECURE_CRT)
+         newHandler = dbxInvalidParameterHandler;
+         oldHandler = _set_invalid_parameter_handler(newHandler);
+#endif
+         InitializeCriticalSection(&dbx_async_mutex);
+         break;
+      case DLL_THREAD_ATTACH:
+         break;
+      case DLL_THREAD_DETACH:
+         break;
+      case DLL_PROCESS_DETACH:
+         DeleteCriticalSection(&dbx_async_mutex);
+         break;
+   }
+   return TRUE;
+}
+#endif
+
+/* Start of DBX class methods */
+#if DBX_NODE_VERSION >= 100000
+void DBX_DBNAME::Init(Local<Object> target)
+#else
+void DBX_DBNAME::Init(Handle<Object> target)
+#endif
+{
+
+#if DBX_NODE_VERSION >= 120000
+   Isolate* isolate = target->GetIsolate();
+
+   Local<FunctionTemplate> t = FunctionTemplate::New(isolate, New);
+   t->SetClassName(String::NewFromUtf8(isolate, DBX_DBNAME_STR, NewStringType::kNormal).ToLocalChecked());
+   t->InstanceTemplate()->SetInternalFieldCount(1);
+#else
+   Isolate* isolate = Isolate::GetCurrent();
+
+   Local<FunctionTemplate> t = FunctionTemplate::New(isolate, New);
+   t->InstanceTemplate()->SetInternalFieldCount(1);
+   t->SetClassName(String::NewFromUtf8(isolate, DBX_DBNAME_STR));
+#endif
+
+   DBX_NODE_SET_PROTOTYPE_METHOD("version", Version);
+   DBX_NODE_SET_PROTOTYPE_METHOD("open", Open);
+   DBX_NODE_SET_PROTOTYPE_METHOD("close", Close);
+   DBX_NODE_SET_PROTOTYPE_METHOD("get", Get);
+   DBX_NODE_SET_PROTOTYPE_METHOD("set", Set);
+   DBX_NODE_SET_PROTOTYPE_METHOD("defined", Defined);
+   DBX_NODE_SET_PROTOTYPE_METHOD("delete", Delete);
+   DBX_NODE_SET_PROTOTYPE_METHOD("next", Next);
+   DBX_NODE_SET_PROTOTYPE_METHOD("previous", Previous);
+   DBX_NODE_SET_PROTOTYPE_METHOD("mglobal", MGlobal);
+   DBX_NODE_SET_PROTOTYPE_METHOD("mglobal_close", MGlobal_Close);
+   DBX_NODE_SET_PROTOTYPE_METHOD("function", ExtFunction);
+
+#if DBX_NODE_VERSION >= 120000
+   Local<Context> icontext = isolate->GetCurrentContext();
+   s_ct.Reset(isolate, t->GetFunction(icontext).ToLocalChecked());
+   target->Set(icontext, String::NewFromUtf8(isolate, DBX_DBNAME_STR, NewStringType::kNormal).ToLocalChecked(), t->GetFunction(icontext).ToLocalChecked()).FromJust();
+#else
+   s_ct.Reset(isolate, t->GetFunction());
+   target->Set(String::NewFromUtf8(isolate, DBX_DBNAME_STR), t->GetFunction());
+#endif
+
+}
+
+
+DBX_DBNAME::DBX_DBNAME(int value) : m_count(value)
+{
+}
+
+DBX_DBNAME::~DBX_DBNAME()
+{
+}
+
+
+void DBX_DBNAME::New(const FunctionCallbackInfo<Value>& args)
+{
+   DBX_GET_SCOPE;
+   DBX_DBNAME *c = new DBX_DBNAME();
+   c->Wrap(args.This());
+
+   counter = 0;
+   c->open = 0;
+
+   c->csize = 8;
+   c->utf8 = 1;
+
+   c->pcon = NULL;
+
+   c->mutex.created = 0;
+   c->mutex.stack = 0; 
+   c->use_mutex = 0;
+
+   c->handle_sigint = 0;
+   c->handle_sigterm = 0;
+
+   c->debug.debug = 0;
+   c->debug.p_fdebug = stdout;
+
+   c->isolate = NULL;
+
+   c->zv.dbtype = 0;
+   T_STRCPY(c->zv.version, _dbxso(c->zv.version), "");
+
+   c->pcon = NULL;
+   c->pcon = (DBXCON *) dbx_malloc(sizeof(DBXCON), 0);
+   memset((void *) c->pcon, 0, sizeof(DBXCON));
+
+   c->pcon->p_mutex = (DBXMUTEX *) dbx_malloc(sizeof(DBXMUTEX), 0);
+   memset((void *) c->pcon->p_mutex, 0, sizeof(DBXMUTEX));
+
+   c->pcon->p_zv = (DBXZV *) dbx_malloc(sizeof(DBXZV), 0);
+   memset((void *) c->pcon->p_zv, 0, sizeof(DBXZV));
+
+   c->pcon->p_debug = (DBXDEBUG *) dbx_malloc(sizeof(DBXDEBUG), 0);
+   memset((void *) c->pcon->p_debug, 0, sizeof(DBXDEBUG));
+
+   c->pcon->output_val.svalue.buf_addr = (char *) dbx_malloc(32000, 0);
+   memset((void *) c->pcon->output_val.svalue.buf_addr, 0, 32000);
+   c->pcon->output_val.svalue.len_alloc = 32000;
+   c->pcon->output_val.svalue.len_used = 0;
+
+   c->pcon->ibuffer = (unsigned char *) dbx_malloc(32000, 0);
+   c->pcon->ibuffer_used = 0;
+   c->pcon->ibuffer_size = 32000;
+
+   c->pcon->p_isc_so = NULL;
+   c->pcon->p_ydb_so = NULL;
+
+   args.GetReturnValue().Set(args.This());
+   return;
+
+}
+
+
+#if DBX_NODE_VERSION >= 100000
+void DBX_DBNAME::dbx_set_prototype_method(Local<FunctionTemplate> t, FunctionCallback callback, const char* name, const char* data)
+#else
+void DBX_DBNAME::dbx_set_prototype_method(Handle<FunctionTemplate> t, FunctionCallback callback, const char* name, const char* data)
+#endif
+{
+#if DBX_NODE_VERSION >= 100000
+
+   v8::Isolate* isolate = v8::Isolate::GetCurrent();
+   v8::HandleScope handle_scope(isolate);
+   v8::Local<v8::Signature> s = v8::Signature::New(isolate, t);
+   Local<String> data_str = String::NewFromUtf8(isolate, data);
+
+#if 0
+   v8::Local<v8::FunctionTemplate> tx = v8::FunctionTemplate::New(isolate, callback, v8::Local<v8::Value>(), s);
+#else
+   v8::Local<v8::FunctionTemplate> tx = v8::FunctionTemplate::New(isolate, callback, data_str, s);
+#endif
+   v8::Local<v8::String> fn_name = v8::String::NewFromUtf8(isolate, name);
+   tx->SetClassName(fn_name);
+   t->PrototypeTemplate()->Set(fn_name, tx);
+#else
+   NODE_SET_PROTOTYPE_METHOD(t, name, callback);
+#endif
+
+   return;
+}
+
+
+Local<Object> DBX_DBNAME::dbx_is_object(Local<Value> value, int *otype)
+{
+#if DBX_NODE_VERSION >= 120000
+   Isolate* isolate = Isolate::GetCurrent();
+#endif
+   *otype = 0;
+
+   if (value->IsObject()) {
+      *otype = 1;
+      Local<Object> value_obj = DBX_TO_OBJECT(value);
+      if (node::Buffer::HasInstance(value_obj)) {
+         *otype = 2;
+      }
+      return value_obj;
+   }
+   else {
+      return Local<Object>::Cast(value);
+   }
+}
+
+
+int DBX_DBNAME::dbx_string8_length(Isolate * isolate, Local<String> str, int utf8)
+{
+   if (utf8) {
+      return DBX_UTF8_LENGTH(str);
+   }
+   else {
+      return DBX_LENGTH(str);
+   }
+}
+
+Local<String> DBX_DBNAME::dbx_new_string8(Isolate * isolate, char * buffer, int utf8)
+{
+   if (utf8) {
+      return String::NewFromUtf8(isolate, buffer);
+   }
+   else {
+#if DBX_NODE_VERSION >= 100000
+      return String::NewFromOneByte(isolate, (uint8_t *) buffer, NewStringType::kInternalized).ToLocalChecked();
+#else
+      return String::NewFromOneByte(isolate, (uint8_t *) buffer);
+#endif
+   }
+}
+
+
+Local<String> DBX_DBNAME::dbx_new_string8n(Isolate * isolate, char * buffer, unsigned long len, int utf8)
+{
+   if (utf8) {
+      return String::NewFromUtf8(isolate, buffer, String::kNormalString, len);
+   }
+   else {
+#if DBX_NODE_VERSION >= 100000
+      return String::NewFromOneByte(isolate, (uint8_t *) buffer, NewStringType::kInternalized, len).ToLocalChecked();
+#else
+      return String::NewFromOneByte(isolate, (uint8_t *) buffer, String::kNormalString, len);
+#endif
+
+   }
+}
+
+
+int DBX_DBNAME::dbx_write_char8(Isolate * isolate, Local<String> str, char * buffer, int utf8)
+{
+   if (utf8) {
+      return DBX_WRITE_UTF8(str, buffer);
+   }
+   else {
+      return DBX_WRITE_ONE_BYTE(str, (uint8_t *) buffer);
+   }
+}
+
+
+int DBX_DBNAME::dbx_ibuffer_add(DBXCON *pcon, v8::Isolate * isolate, int argn, Local<String> str, char * buffer, int buffer_len, short context)
+{
+   int len;
+   unsigned char *p;
+
+   if (buffer)
+      len = buffer_len;
+   else
+      len = dbx_string8_length(isolate, str, pcon->utf8);
+
+   pcon->ibuffer_used += 5;
+   p = (pcon->ibuffer + pcon->ibuffer_used);
+   if (buffer) {
+      T_STRNCPY((char *) p, (pcon->ibuffer_size - pcon->ibuffer_used), buffer, buffer_len);
+   }
+   else {
+      dbx_write_char8(isolate, str, (char *) p, pcon->utf8);
+   }
+
+   pcon->args[argn].svalue.buf_addr = (char *) p;
+   pcon->args[argn].svalue.len_alloc = len;
+   pcon->args[argn].svalue.len_used = len;
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      if (argn > 0) {
+         pcon->yargs[argn - 1].len_used = pcon->args[argn].svalue.len_used;
+         pcon->yargs[argn - 1].len_alloc = pcon->args[argn].svalue.len_alloc;
+         pcon->yargs[argn - 1].buf_addr = (char *) pcon->args[argn].svalue.buf_addr;
+      }
+
+      if (argn == 0 && context == 0 && pcon->args[argn].svalue.buf_addr[0] != '^') {
+         pcon->args[argn].svalue.buf_addr = (char *) (p - 1);
+         pcon->args[argn].svalue.len_used ++;
+         pcon->args[argn].svalue.len_alloc ++;
+         pcon->args[argn].svalue.buf_addr[0] = '^';
+      }
+
+
+   }
+
+
+   return len;
+}
+
+
+DBX_DBNAME::dbx_baton_t * DBX_DBNAME::dbx_make_baton(DBX_DBNAME *c, DBXCON *pcon)
+{
+   dbx_baton_t *baton;
+
+   baton = new dbx_baton_t();
+
+   if (!baton) {
+      return NULL;
+   }
+   baton->c = c;
+   baton->pcon = pcon;
+   return baton;
+}
+
+
+int DBX_DBNAME::dbx_destroy_baton(dbx_baton_t *baton, DBXCON *pcon)
+{
+
+   if (baton) {
+      delete baton;
+   }
+
+   return 0;
+}
+
+
+int DBX_DBNAME::dbx_queue_task(void * work_cb, void * after_work_cb, DBX_DBNAME::dbx_baton_t *baton, short context)
+{
+   uv_work_t *_req = new uv_work_t;
+   _req->data = baton;
+   uv_queue_work(uv_default_loop(), _req, (uv_work_cb) work_cb, (uv_after_work_cb) after_work_cb);
+
+   return 0;
+}
+
+/* ASYNC THREAD */
+async_rtn DBX_DBNAME::dbx_process_task(uv_work_t *req)
+{
+   DBX_DBNAME::dbx_baton_t *baton = static_cast<DBX_DBNAME::dbx_baton_t *>(req->data);
+
+   dbx_launch_thread(baton->pcon);
+
+   baton->c->m_count += baton->increment_by;
+
+   return;
+}
+
+
+/* PRIMARY THREAD : Standard callback wrapper */
+async_rtn DBX_DBNAME::dbx_uv_close_callback(uv_work_t *req)
+{
+/*
+   printf("\r\n*** %lu cache_uv_close_callback() (%d, req=%p) ...", (unsigned long) dbx_current_thread_id(), dbx_queue_size, req);
+*/
+   delete req;
+
+   return;
+}
+
+
+async_rtn DBX_DBNAME::dbx_invoke_callback(uv_work_t *req)
+{
+   Isolate* isolate = Isolate::GetCurrent();
+   HandleScope scope(isolate);
+
+   dbx_baton_t *baton = static_cast<dbx_baton_t *>(req->data);
+
+   baton->c->Unref();
+
+   Local<Value> argv[2];
+
+   if (baton->pcon->error[0])
+      argv[0] = DBX_INTEGER_NEW(true);
+   else
+      argv[0] = DBX_INTEGER_NEW(false);
+
+   baton->result = dbx_new_string8n(isolate, baton->pcon->output_val.svalue.buf_addr, baton->pcon->output_val.svalue.len_used, baton->c->utf8);
+   argv[1] = baton->result;
+
+#if DBX_NODE_VERSION < 100000
+   TryCatch try_catch;
+#endif
+
+   Local<Function> cb = Local<Function>::New(isolate, baton->cb);
+
+#if DBX_NODE_VERSION >= 120000
+   /* cb->Call(isolate->GetCurrentContext(), isolate->GetCurrentContext()->Global(), 2, argv); */
+   cb->Call(isolate->GetCurrentContext(), Null(isolate), 2, argv).ToLocalChecked();
+#else
+   cb->Call(isolate->GetCurrentContext()->Global(), 2, argv);
+#endif
+
+#if DBX_NODE_VERSION < 100000
+   if (try_catch.HasCaught()) {
+      node::FatalException(isolate, try_catch);
+   }
+#endif
+
+   baton->cb.Reset();
+
+	DBX_DBFUN_END(baton->c);
+
+   dbx_destroy_baton(baton, baton->pcon);
+
+   delete req;
+   return;
+}
+
+
+
+void DBX_DBNAME::Version(const FunctionCallbackInfo<Value>& args)
+{
+   DBX_GET_SCOPE;
+   short async;
+   int js_narg;
+   DBXCON *pcon;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   c->m_count ++;
+
+   pcon = c->pcon;
+
+   DBX_CALLBACK_FUN(js_narg, cb, async);
+
+   if (js_narg >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Too many arguments on Version")));
+   }
+
+   dbx_version(pcon);
+
+   Local<String> result;
+   result = dbx_new_string8(isolate, (char *) pcon->output_val.svalue.buf_addr, pcon->utf8);
+
+   args.GetReturnValue().Set(result);
+}
+
+
+void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
+{
+   DBX_GET_SCOPE;
+   short async;
+   int rc, js_narg;
+   DBXCON *pcon;
+#if !defined(_WIN32)
+   struct sigaction action;
+#endif
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   c->m_count ++;
+
+   pcon = c->pcon;
+
+   DBX_CALLBACK_FUN(js_narg, cb, async);
+
+   if (js_narg >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Too many arguments on Open")));
+   }
+
+   if (c->open) {
+      Local<String> result = dbx_new_string8(isolate, "", 0);
+      args.GetReturnValue().Set(result);
+   }
+
+   Local<Object> obj, objn;
+   Local<Value> key;
+   Local<String> value;
+
+   obj = DBX_TO_OBJECT(args[0]);
+
+   key = dbx_new_string8(isolate, "type", 0);
+   if (!obj->Get(key)->IsUndefined()) {
+      value = DBX_TO_STRING(obj->Get(key));
+      DBX_WRITE_UTF8(value, pcon->type);
+      dbx_lcase(pcon->type);
+
+      if (!strcmp(pcon->type, "cache"))
+         pcon->dbtype = DBX_DBTYPE_CACHE;
+      else if (!strcmp(pcon->type, "iris"))
+         pcon->dbtype = DBX_DBTYPE_IRIS;
+      else if (!strcmp(pcon->type, "yottadb"))
+         pcon->dbtype = DBX_DBTYPE_YOTTADB;
+   }
+   key = dbx_new_string8(isolate, "path", 0);
+   if (!obj->Get(key)->IsUndefined()) {
+      value = DBX_TO_STRING(obj->Get(key));
+      DBX_WRITE_UTF8(value, pcon->path);
+   }
+   key = dbx_new_string8(isolate, "username", 0);
+   if (!obj->Get(key)->IsUndefined()) {
+      value = DBX_TO_STRING(obj->Get(key));
+      DBX_WRITE_UTF8(value, pcon->username);
+   }
+   key = dbx_new_string8(isolate, "password", 0);
+   if (!obj->Get(key)->IsUndefined()) {
+      value = DBX_TO_STRING(obj->Get(key));
+      DBX_WRITE_UTF8(value, pcon->password);
+   }
+   key = dbx_new_string8(isolate, "namespace", 0);
+   if (!obj->Get(key)->IsUndefined()) {
+      value = DBX_TO_STRING(obj->Get(key));
+      DBX_WRITE_UTF8(value, pcon->nspace);
+   }
+   key = dbx_new_string8(isolate, "input_device", 0);
+   if (!obj->Get(key)->IsUndefined()) {
+      value = DBX_TO_STRING(obj->Get(key));
+      DBX_WRITE_UTF8(value, pcon->input_device);
+   }
+   key = dbx_new_string8(isolate, "output_device", 0);
+   if (!obj->Get(key)->IsUndefined()) {
+      value = DBX_TO_STRING(obj->Get(key));
+      DBX_WRITE_UTF8(value, pcon->output_device);
+   }
+
+   key = dbx_new_string8(isolate, "env_vars", 0);
+   if (!obj->Get(key)->IsUndefined()) {
+      char *p, *p1, *p2;
+      value = DBX_TO_STRING(obj->Get(key));
+      DBX_WRITE_UTF8(value, (char *) c->pcon->ibuffer);
+
+      p = (char *) c->pcon->ibuffer;
+      p2 = p;
+      while ((p2 = strstr(p, "\n"))) {
+         *p2 = '\0';
+         p1 = strstr(p, "=");
+         if (p1) {
+            *p1 = '\0';
+            p1 ++;
+#if defined(_WIN32)
+            SetEnvironmentVariable((LPCTSTR) p, (LPCTSTR) p1);
+#else
+            /* printf("\nLinux : environment variable p=%s p1=%s;", p, p1); */
+            setenv(p, p1, 1);
+#endif
+         }
+         else {
+            break;
+         }
+         p = p2 + 1;
+      }
+   }
+
+#if defined(_WIN32)
+
+   if (c->handle_sigint) {
+      signal(SIGINT, dbxGoingDownSignal);
+      /* printf("\r\nSet Signal Handler for SIGINT"); */
+   }
+   if (c->handle_sigterm) {
+      signal(SIGTERM, dbxGoingDownSignal);
+      /* printf("\r\nSet Signal Handler for SIGTERM"); */
+   }
+
+#else
+
+   action.sa_flags = 0;
+   sigemptyset(&(action.sa_mask));
+   if (c->handle_sigint) {
+      action.sa_handler = dbxGoingDownSignal;
+      sigaction(SIGTERM, &action, NULL);
+      /* printf("\r\nSet Signal Handler for SIGINT"); */
+   }
+   if (c->handle_sigterm) {
+      action.sa_handler = dbxGoingDownSignal;
+      sigaction(SIGINT, &action, NULL);
+      /* printf("\r\nSet Signal Handler for SIGTERM"); */
+   }
+
+#endif
+
+    if (async) {
+      dbx_baton_t *baton = dbx_make_baton(c, pcon);
+      baton->pcon->p_dbxfun = (void * (*) (struct tagDBXCON * pcon)) dbx_do_nothing;
+
+      rc = dbx_open(pcon);
+      if (rc == CACHE_SUCCESS) {
+         c->open = 1;
+      }
+
+      Local<Function> cb = Local<Function>::Cast(args[js_narg]);
+
+      baton->cb.Reset(isolate, cb);
+
+      c->Ref();
+
+      if (dbx_queue_task((void *) dbx_process_task, (void *) dbx_invoke_callback, baton, 0)) {
+         char error[DBX_ERROR_SIZE];
+         T_STRCPY(error, _dbxso(error), pcon->error);
+         dbx_destroy_baton(baton, pcon);
+         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, error)));
+      }
+
+      return;
+   }
+
+   rc = dbx_open(pcon);
+
+   if (rc == CACHE_SUCCESS)
+      c->open = 1; 
+
+//Open_Exit:
+
+   Local<String> result = dbx_new_string8(isolate, pcon->error, 0);
+   args.GetReturnValue().Set(result);
+ }
+
+
+void DBX_DBNAME::Close(const FunctionCallbackInfo<Value>& args)
+{
+   DBX_GET_SCOPE;
+   short async;
+   int js_narg;
+   DBXCON *pcon;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   c->m_count ++;
+
+   pcon = c->pcon;
+
+   DBX_DBFUN_START(c, pcon);
+
+   c->open = 0;
+
+   DBX_CALLBACK_FUN(js_narg, cb, async);
+
+   pcon->error[0] = '\0';
+   if (pcon && pcon->error[0]) {
+      goto Close_Exit;
+   }
+
+   if (async) {
+      dbx_baton_t *baton = dbx_make_baton(c, pcon);
+      baton->pcon->p_dbxfun = (void * (*) (struct tagDBXCON * pcon)) dbx_do_nothing;
+
+      dbx_close(baton->pcon);
+
+      Local<Function> cb = Local<Function>::Cast(args[js_narg]);
+
+      baton->cb.Reset(isolate, cb);
+
+      c->Ref();
+
+      if (dbx_queue_task((void *) dbx_process_task, (void *) dbx_invoke_callback, baton, 0)) {
+         char error[DBX_ERROR_SIZE];
+         T_STRCPY(error, _dbxso(error), pcon->error);
+         dbx_destroy_baton(baton, pcon);
+         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, error)));
+      }
+
+      return;
+   }
+
+   dbx_close(pcon);
+
+Close_Exit:
+
+   Local<String> result = dbx_new_string8(isolate, pcon->error, 0);
+
+   args.GetReturnValue().Set(result);
+}
+
+
+int DBX_DBNAME::GlobalReference(const FunctionCallbackInfo<Value>& args, DBXCON *pcon, DBXGREF *pgref, short context)
+{
+   DBX_GET_SCOPE;
+   int n, nx, rc, otype;
+   unsigned int ne;
+   char *p;
+   char buffer[64];
+   Local<Object> obj;
+   Local<String> str;
+
+   pcon->ibuffer_used = 0;
+
+   if (!context) {
+      DBX_DB_LOCK(rc, 0);
+   }
+
+   pcon->output_val.svalue.len_used = 0;
+   nx = 0;
+   n = 0;
+   pcon->args[nx].cvalue.pstr = 0;
+   if (pgref) {
+      dbx_ibuffer_add(pcon, isolate, nx, str, pgref->global, (int) strlen(pgref->global), 0);
+   }
+   else {
+      str = DBX_TO_STRING(args[n]);
+      dbx_ibuffer_add(pcon, isolate, nx, str, NULL, 0, 0);
+      n ++;
+   }
+
+   if (pcon->dbtype != DBX_DBTYPE_YOTTADB && context == 0) {
+      if (pcon->args[0].svalue.buf_addr[0] == '^')
+         rc = pcon->p_isc_so->p_CachePushGlobal((int) pcon->args[nx].svalue.len_used - 1, (Callin_char_t *) pcon->args[nx].svalue.buf_addr + 1);
+      else
+         rc = pcon->p_isc_so->p_CachePushGlobal((int) pcon->args[nx].svalue.len_used, (Callin_char_t *) pcon->args[nx].svalue.buf_addr);
+   }
+
+   nx ++;
+
+   for (; n < pcon->argc; n ++, nx ++) {
+
+      pcon->args[nx].cvalue.pstr = 0;
+
+      if (args[n]->IsInt32()) {
+         pcon->args[nx].type = DBX_TYPE_INT;
+         pcon->args[nx].num.int32 = (int) DBX_INT32_VALUE(args[n]);
+         T_SPRINTF(buffer, _dbxso(buffer), "%d", ne);
+         dbx_ibuffer_add(pcon, isolate, nx, str, buffer, (int) strlen(buffer), 0);
+      }
+      else {
+         pcon->args[nx].type = DBX_TYPE_STR;
+         obj = dbx_is_object(args[n], &otype);
+
+         if (otype == 2) {
+            p = node::Buffer::Data(obj);
+            dbx_ibuffer_add(pcon, isolate, nx, str, p, (int) strlen(p), 0);
+         }
+         else {
+            str = DBX_TO_STRING(args[n]);
+            dbx_ibuffer_add(pcon, isolate, nx, str, NULL, 0, 0);
+         }
+      }
+      if (pcon->dbtype != DBX_DBTYPE_YOTTADB && context == 0) {
+         if (pcon->args[n].type == DBX_TYPE_INT) {
+            rc = pcon->p_isc_so->p_CachePushInt((int) pcon->args[nx].num.int32);
+         }
+         else {
+            if (pcon->args[n].svalue.len_used < CACHE_MAXSTRLEN) {
+               rc = rc = pcon->p_isc_so->p_CachePushStr(pcon->args[nx].svalue.len_used, (Callin_char_t *) pcon->args[nx].svalue.buf_addr);
+            }
+            else {
+               pcon->args[nx].cvalue.pstr = (void *) pcon->p_isc_so->p_CacheExStrNew((CACHE_EXSTRP) &(pcon->args[nx].cvalue.zstr), pcon->args[nx].svalue.len_used + 1);
+               for (ne = 0; ne < pcon->args[nx].svalue.len_used; ne ++) {
+                  pcon->args[nx].cvalue.zstr.str.ch[ne] = (char) pcon->args[nx].svalue.buf_addr[ne];
+               }
+               pcon->args[nx].cvalue.zstr.str.ch[ne] = (char) 0;
+               pcon->args[nx].cvalue.zstr.len = pcon->args[nx].svalue.len_used;
+
+               rc = rc = pcon->p_isc_so->p_CachePushExStr((CACHE_EXSTRP) &(pcon->args[nx].cvalue.zstr));
+            }
+         }
+      }
+   }
+
+   return rc;
+}
+
+
+void DBX_DBNAME::Get(const FunctionCallbackInfo<Value>& args)
+{
+   DBX_GET_SCOPE;
+   short async;
+   int rc;
+   DBXCON *pcon;
+   Local<String> result;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   c->m_count ++;
+
+   pcon = c->pcon;
+
+   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+
+   if (pcon->argc >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Too many arguments on Get")));
+   }
+   if (pcon->argc == 0) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Missing or invalid global name on Get")));
+   }
+   
+   DBX_DBFUN_START(c, pcon);
+
+   rc = GlobalReference(args, pcon, NULL, async);
+
+   if (async) {
+      dbx_baton_t *baton = dbx_make_baton(c, pcon);
+      baton->pcon->p_dbxfun = (void * (*) (struct tagDBXCON * pcon)) dbx_get;
+      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+
+      baton->cb.Reset(isolate, cb);
+
+      c->Ref();
+
+      if (dbx_queue_task((void *) dbx_process_task, (void *) dbx_invoke_callback, baton, 0)) {
+         char error[DBX_ERROR_SIZE];
+
+         T_STRCPY(error, _dbxso(error), pcon->error);
+         dbx_destroy_baton(baton, pcon);
+         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, error)));
+      }
+      return;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = pcon->p_ydb_so->p_ydb_get_s(&(pcon->args[0].svalue), pcon->argc - 1, &pcon->yargs[0], &(pcon->output_val.svalue));
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheGlobalGet(pcon->argc - 1, 0);
+   }
+
+   if (rc == CACHE_ERUNDEF) {
+      dbx_create_string(&(pcon->output_val.svalue), (void *) "", DBX_TYPE_STR8);
+   }
+   else if (rc == CACHE_SUCCESS) {
+      if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
+         isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+      }
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+   DBX_DBFUN_END(c);
+   DBX_DB_UNLOCK(rc);
+
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   args.GetReturnValue().Set(result);
+}
+
+
+void DBX_DBNAME::Set(const FunctionCallbackInfo<Value>& args)
+{
+   DBX_GET_SCOPE;
+   short async;
+   int rc;
+   DBXCON *pcon;
+   Local<String> result;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   c->m_count ++;
+
+   pcon = c->pcon;
+
+   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+
+   if (pcon->argc >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Too many arguments on Set")));
+   }
+   if (pcon->argc == 0) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Missing or invalid global name on Set")));
+   }
+
+   DBX_DBFUN_START(c, pcon);
+
+   rc = GlobalReference(args, pcon, NULL, async);
+
+   if (async) {
+      dbx_baton_t *baton = dbx_make_baton(c, pcon);
+      baton->pcon->p_dbxfun = (void * (*) (struct tagDBXCON * pcon)) dbx_set;
+      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+      baton->cb.Reset(isolate, cb);
+      c->Ref();
+      if (dbx_queue_task((void *) dbx_process_task, (void *) dbx_invoke_callback, baton, 0)) {
+         char error[DBX_ERROR_SIZE];
+         T_STRCPY(error, _dbxso(error), pcon->error);
+         dbx_destroy_baton(baton, pcon);
+         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, error)));
+      }
+      return;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = pcon->p_ydb_so->p_ydb_set_s(&(pcon->args[0].svalue), pcon->argc - 2, &pcon->yargs[0], &(pcon->args[pcon->argc - 1].svalue));
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheGlobalSet(pcon->argc - 2);
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      dbx_create_string(&(pcon->output_val.svalue), (void *) &rc, DBX_TYPE_INT);
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+   DBX_DBFUN_END(c);
+   DBX_DB_UNLOCK(rc);
+
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   args.GetReturnValue().Set(result);
+}
+
+
+void DBX_DBNAME::Defined(const FunctionCallbackInfo<Value>& args)
+{
+   DBX_GET_SCOPE;
+   short async;
+   int rc, n;
+   DBXCON *pcon;
+   Local<String> result;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   c->m_count ++;
+
+   pcon = c->pcon;
+
+   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+
+   if (pcon->argc >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Too many arguments on Defined")));
+   }
+   if (pcon->argc == 0) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Missing or invalid global name on Defined")));
+   }
+   
+   DBX_DBFUN_START(c, pcon);
+
+   rc = GlobalReference(args, pcon, NULL, async);
+
+   if (async) {
+      dbx_baton_t *baton = dbx_make_baton(c, pcon);
+      baton->pcon->p_dbxfun = (void * (*) (struct tagDBXCON * pcon)) dbx_defined;
+      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+      baton->cb.Reset(isolate, cb);
+      c->Ref();
+      if (dbx_queue_task((void *) dbx_process_task, (void *) dbx_invoke_callback, baton, 0)) {
+         char error[DBX_ERROR_SIZE];
+         T_STRCPY(error, _dbxso(error), pcon->error);
+         dbx_destroy_baton(baton, pcon);
+         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, error)));
+      }
+      return;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = pcon->p_ydb_so->p_ydb_data_s(&(pcon->args[0].svalue), pcon->argc - 1, &pcon->yargs[0], (unsigned int *) &n);
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheGlobalData(pcon->argc - 1, 0);
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      if (pcon->p_zv->dbtype != DBX_DBTYPE_YOTTADB) {
+         pcon->p_isc_so->p_CachePopInt(&n);
+      }
+      dbx_create_string(&(pcon->output_val.svalue), (void *) &n, DBX_TYPE_INT);
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+   DBX_DBFUN_END(c);
+   DBX_DB_UNLOCK(rc);
+
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   args.GetReturnValue().Set(result);
+}
+
+
+void DBX_DBNAME::Delete(const FunctionCallbackInfo<Value>& args)
+{
+   DBX_GET_SCOPE;
+   short async;
+   int rc, n;
+   DBXCON *pcon;
+   Local<String> result;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   c->m_count ++;
+
+   pcon = c->pcon;
+
+   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+
+   if (pcon->argc >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Too many arguments on Delete")));
+   }
+   if (pcon->argc == 0) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Missing or invalid global name on Delete")));
+   }
+   
+   DBX_DBFUN_START(c, pcon);
+
+   rc = GlobalReference(args, pcon, NULL, async);
+
+   if (async) {
+      dbx_baton_t *baton = dbx_make_baton(c, pcon);
+      baton->pcon->p_dbxfun = (void * (*) (struct tagDBXCON * pcon)) dbx_delete;
+      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+      baton->cb.Reset(isolate, cb);
+      c->Ref();
+      if (dbx_queue_task((void *) dbx_process_task, (void *) dbx_invoke_callback, baton, 0)) {
+         char error[DBX_ERROR_SIZE];
+         T_STRCPY(error, _dbxso(error), pcon->error);
+         dbx_destroy_baton(baton, pcon);
+         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, error)));
+      }
+      return;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = pcon->p_ydb_so->p_ydb_delete_s(&(pcon->args[0].svalue), pcon->argc - 1, &pcon->yargs[0], YDB_DEL_TREE);
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheGlobalKill(pcon->argc - 1, 0);
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      n = 0;
+      dbx_create_string(&(pcon->output_val.svalue), (void *) &n, DBX_TYPE_INT);
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+   DBX_DBFUN_END(c);
+   DBX_DB_UNLOCK(rc);
+
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   args.GetReturnValue().Set(result);
+}
+
+
+void DBX_DBNAME::Next(const FunctionCallbackInfo<Value>& args)
+{
+   DBX_GET_SCOPE;
+   short async;
+   int rc;
+   DBXCON *pcon;
+   Local<String> result;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   c->m_count ++;
+
+   pcon = c->pcon;
+
+   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+
+   if (pcon->argc >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Too many arguments on Next")));
+   }
+   if (pcon->argc == 0) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Missing or invalid global name on Next")));
+   }
+   
+   DBX_DBFUN_START(c, pcon);
+
+   rc = GlobalReference(args, pcon, NULL, async);
+
+   if (async) {
+      dbx_baton_t *baton = dbx_make_baton(c, pcon);
+      baton->pcon->p_dbxfun = (void * (*) (struct tagDBXCON * pcon)) dbx_delete;
+      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+      baton->cb.Reset(isolate, cb);
+      c->Ref();
+      if (dbx_queue_task((void *) dbx_process_task, (void *) dbx_invoke_callback, baton, 0)) {
+         char error[DBX_ERROR_SIZE];
+         T_STRCPY(error, _dbxso(error), pcon->error);
+         dbx_destroy_baton(baton, pcon);
+         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, error)));
+      }
+      return;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = pcon->p_ydb_so->p_ydb_subscript_next_s(&(pcon->args[0].svalue), pcon->argc - 1, &pcon->yargs[0], &(pcon->output_val.svalue));
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheGlobalOrder(pcon->argc - 1, 1, 0);
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
+         isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+      }
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+
+   DBX_DBFUN_END(c);
+   DBX_DB_UNLOCK(rc);
+
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   args.GetReturnValue().Set(result);
+}
+
+
+void DBX_DBNAME::Previous(const FunctionCallbackInfo<Value>& args)
+{
+   DBX_GET_SCOPE;
+   short async;
+   int rc;
+   DBXCON *pcon;
+   Local<String> result;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   c->m_count ++;
+
+   pcon = c->pcon;
+
+   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+
+   if (pcon->argc >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Too many arguments on Previous")));
+   }
+   if (pcon->argc == 0) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Missing or invalid global name on Previous")));
+   }
+   
+   DBX_DBFUN_START(c, pcon);
+
+   rc = GlobalReference(args, pcon, NULL, async);
+
+   if (async) {
+      dbx_baton_t *baton = dbx_make_baton(c, pcon);
+      baton->pcon->p_dbxfun = (void * (*) (struct tagDBXCON * pcon)) dbx_delete;
+      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+      baton->cb.Reset(isolate, cb);
+      c->Ref();
+      if (dbx_queue_task((void *) dbx_process_task, (void *) dbx_invoke_callback, baton, 0)) {
+         char error[DBX_ERROR_SIZE];
+         T_STRCPY(error, _dbxso(error), pcon->error);
+         dbx_destroy_baton(baton, pcon);
+         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, error)));
+      }
+      return;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = pcon->p_ydb_so->p_ydb_subscript_previous_s(&(pcon->args[0].svalue), pcon->argc - 1, &pcon->yargs[0], &(pcon->output_val.svalue));
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheGlobalOrder(pcon->argc - 1, -1, 0);
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
+         isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+      }
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+
+   DBX_DBFUN_END(c);
+   DBX_DB_UNLOCK(rc);
+
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+
+   args.GetReturnValue().Set(result);
+}
+
+
+void DBX_DBNAME::MGlobal(const FunctionCallbackInfo<Value>& args)
+{
+   DBX_GET_SCOPE;
+   short async;
+   char global_name[256];
+   DBXCON *pcon;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   c->m_count ++;
+
+   pcon = c->pcon;
+
+   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+
+   if (pcon->argc != 1) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "The mglobal method takes one argument (the global name)")));
+   }
+
+   dbx_write_char8(isolate, DBX_TO_STRING(args[0]), global_name, pcon->utf8);
+   if (global_name[0] == '\0') {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "The mglobal method takes one argument (the global name)")));
+   }
+
+   mglobal *gx = mglobal::NewInstance(args, global_name, (char *)  "");
+
+   gx->c = c;
+   gx->pcon = c->pcon;
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      if (global_name[0] == '^') {
+         T_STRCPY(gx->global_name, _dbxso(gx->global_name), global_name);
+      }
+      else {
+         gx->global_name[0] = '^';
+         T_STRCPY(gx->global_name + 1, _dbxso(gx->global_name), global_name);
+      }
+   }
+   else {
+      if (global_name[0] == '^') {
+         T_STRCPY(gx->global_name, _dbxso(gx->global_name), global_name + 1);
+      }
+      else {
+         T_STRCPY(gx->global_name, _dbxso(gx->global_name), global_name);
+      }
+   }
+
+   return;
+}
+
+
+void DBX_DBNAME::MGlobal_Close(const FunctionCallbackInfo<Value>& args)
+{
+   DBX_GET_SCOPE;
+   short async;
+   int js_narg;
+   DBXCON *pcon;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   c->m_count ++;
+
+   pcon = NULL;
+
+   DBX_CALLBACK_FUN(js_narg, cb, async);
+
+   if (js_narg != 1) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "The dbx_Class_Close method takes one argument (the Node.js object reference)")));
+   }
+
+#if DBX_NODE_VERSION >= 120000
+   mglobal * cx = node::ObjectWrap::Unwrap<mglobal>(args[0]->ToObject(isolate->GetCurrentContext()).ToLocalChecked());
+#else
+   mglobal * cx = node::ObjectWrap::Unwrap<mglobal>(args[0]->ToObject());
+#endif
+
+   cx->delete_class_template(cx);
+
+   return;
+}
+
+
+int DBX_DBNAME::ExtFunctionReference(const FunctionCallbackInfo<Value>& args, DBXCON *pcon, DBXFREF *pfref, DBXFUN *pfun, short context)
+{
+   DBX_GET_SCOPE;
+   int n, nx, rc, otype;
+   unsigned int ne;
+   char *p;
+   char buffer[64];
+   Local<Object> obj;
+   Local<String> str;
+
+   pcon->ibuffer_used = 0;
+
+   if (!context) {
+      DBX_DB_LOCK(rc, 0);
+   }
+
+   pcon->output_val.svalue.len_used = 0;
+   nx = 0;
+   n = 0;
+   pcon->args[nx].cvalue.pstr = 0;
+   if (pfref) {
+      dbx_ibuffer_add(pcon, isolate, nx, str, pfref->function, (int) strlen(pfref->function), 1);
+   }
+   else {
+      str = DBX_TO_STRING(args[n]);
+      dbx_ibuffer_add(pcon, isolate, nx, str, NULL, 0, 1);
+      n ++;
+   }
+
+   if (context == 0) {
+      T_STRNCPY(pfun->buffer, _dbxso(pfun->buffer), pcon->args[nx].svalue.buf_addr, pcon->args[nx].svalue.len_used);
+      pfun->buffer[pcon->args[nx].svalue.len_used] = '\0';
+      pfun->label = pfun->buffer;
+      pfun->routine = strstr(pfun->buffer, "^");
+      *pfun->routine = '\0';
+      pfun->routine ++;
+      pfun->label_len = (int) strlen(pfun->label);
+      pfun->routine_len = (int) strlen(pfun->routine);
+
+      if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
+         rc = pcon->p_isc_so->p_CachePushFunc(&(pfun->rflag), (int) pfun->label_len, (const Callin_char_t *) pfun->label, (int) pfun->routine_len, (const Callin_char_t *) pfun->routine);
+      }
+   }
+
+   nx ++;
+
+   for (; n < pcon->argc; n ++, nx ++) {
+
+      pcon->args[nx].cvalue.pstr = 0;
+
+      if (args[n]->IsInt32()) {
+         pcon->args[nx].type = DBX_TYPE_INT;
+         pcon->args[nx].num.int32 = (int) DBX_INT32_VALUE(args[n]);
+         T_SPRINTF(buffer, _dbxso(buffer), "%d", ne);
+         dbx_ibuffer_add(pcon, isolate, nx, str, buffer, (int) strlen(buffer), 1);
+      }
+      else {
+         pcon->args[nx].type = DBX_TYPE_STR;
+         obj = dbx_is_object(args[n], &otype);
+
+         if (otype == 2) {
+            p = node::Buffer::Data(obj);
+            dbx_ibuffer_add(pcon, isolate, nx, str, p, (int) strlen(p), 1);
+         }
+         else {
+            str = DBX_TO_STRING(args[n]);
+            dbx_ibuffer_add(pcon, isolate, nx, str, NULL, 0, 1);
+         }
+      }
+      if (pcon->dbtype != DBX_DBTYPE_YOTTADB && context == 0) {
+         if (pcon->args[n].type == DBX_TYPE_INT) {
+            rc = pcon->p_isc_so->p_CachePushInt((int) pcon->args[nx].num.int32);
+         }
+         else {
+            if (pcon->args[n].svalue.len_used < CACHE_MAXSTRLEN) {
+               rc = rc = pcon->p_isc_so->p_CachePushStr(pcon->args[nx].svalue.len_used, (Callin_char_t *) pcon->args[nx].svalue.buf_addr);
+            }
+            else {
+               pcon->args[nx].cvalue.pstr = (void *) pcon->p_isc_so->p_CacheExStrNew((CACHE_EXSTRP) &(pcon->args[nx].cvalue.zstr), pcon->args[nx].svalue.len_used + 1);
+               for (ne = 0; ne < pcon->args[nx].svalue.len_used; ne ++) {
+                  pcon->args[nx].cvalue.zstr.str.ch[ne] = (char) pcon->args[nx].svalue.buf_addr[ne];
+               }
+               pcon->args[nx].cvalue.zstr.str.ch[ne] = (char) 0;
+               pcon->args[nx].cvalue.zstr.len = pcon->args[nx].svalue.len_used;
+
+               rc = rc = pcon->p_isc_so->p_CachePushExStr((CACHE_EXSTRP) &(pcon->args[nx].cvalue.zstr));
+            }
+         }
+      }
+   }
+
+   return rc;
+}
+
+
+void DBX_DBNAME::ExtFunction(const FunctionCallbackInfo<Value>& args)
+{
+   DBX_GET_SCOPE;
+   short async;
+   int rc;
+   DBXCON *pcon;
+   DBXFUN fun;
+   Local<String> result;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   c->m_count ++;
+
+   pcon = c->pcon;
+
+   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+
+   if (pcon->argc >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Too many arguments on Get")));
+   }
+   if (pcon->argc == 0) {
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Missing or invalid global name on Get")));
+   }
+   
+   DBX_DBFUN_START(c, pcon);
+
+   rc = ExtFunctionReference(args, pcon, NULL, &fun, async);
+
+   if (async) {
+      dbx_baton_t *baton = dbx_make_baton(c, pcon);
+      baton->pcon->p_dbxfun = (void * (*) (struct tagDBXCON * pcon)) dbx_get;
+      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+
+      baton->cb.Reset(isolate, cb);
+
+      c->Ref();
+
+      if (dbx_queue_task((void *) dbx_process_task, (void *) dbx_invoke_callback, baton, 0)) {
+         char error[DBX_ERROR_SIZE];
+
+         T_STRCPY(error, _dbxso(error), pcon->error);
+         dbx_destroy_baton(baton, pcon);
+         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, error)));
+      }
+      return;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = ydb_function(pcon, &fun);
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheExtFun(fun.rflag, pcon->argc - 1);
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
+         isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+      }
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+   DBX_DBFUN_END(c);
+   DBX_DB_UNLOCK(rc);
+
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   args.GetReturnValue().Set(result);
+}
+
+
+/* End of dbx-node class methods */
+
+Persistent<Function> DBX_DBNAME::s_ct;
+
+extern "C" {
+#if defined(_WIN32)
+#if DBX_NODE_VERSION >= 100000
+void __declspec(dllexport) init (Local<Object> target)
+#else
+void __declspec(dllexport) init (Handle<Object> target)
+#endif
+#else
+#if DBX_NODE_VERSION >= 100000
+static void init (Local<Object> target)
+#else
+static void init (Handle<Object> target)
+#endif
+#endif
+{
+   DBX_DBNAME::Init(target);
+   //DBX_DBNAME::Init();
+   mglobal::Init();
+}
+
+   NODE_MODULE(dbx, init)
+
+}
+
+
+int isc_load_library(DBXCON *pcon)
+{
+   int n, len, result, rc;
+   char primlib[DBX_ERROR_SIZE], primerr[DBX_ERROR_SIZE];
+   char verfile[256], fun[64];
+   char *libnam[16];
+
+   result = CACHE_SUCCESS;
+
+   strcpy(pcon->p_isc_so->libdir, pcon->path);
+   strcpy(pcon->p_isc_so->funprfx, "Cache");
+   strcpy(pcon->p_isc_so->dbname, "Cache");
+
+   strcpy(verfile, pcon->path);
+   len = (int) strlen(pcon->p_isc_so->libdir);
+   if (pcon->p_isc_so->libdir[len - 1] == '/' || pcon->p_isc_so->libdir[len - 1] == '\\') {
+      pcon->p_isc_so->libdir[len - 1] = '\0';
+      len --;
+   }
+   for (n = len - 1; n > 0; n --) {
+      if (pcon->p_isc_so->libdir[n] == '/') {
+         strcpy((pcon->p_isc_so->libdir + (n + 1)), "bin/");
+         break;
+      }
+      else if (pcon->p_isc_so->libdir[n] == '\\') {
+         strcpy((pcon->p_isc_so->libdir + (n + 1)), "bin\\");
+         break;
+      }
+   }
+
+   n = 0;
+   if (pcon->dbtype == DBX_DBTYPE_IRIS) {
+#if defined(_WIN32)
+      libnam[n ++] = (char *) DBX_IRIS_DLL;
+      libnam[n ++] = (char *) DBX_CACHE_DLL;
+#else
+#if defined(MACOSX)
+      libnam[n ++] = (char *) DBX_IRIS_DYLIB;
+      libnam[n ++] = (char *) DBX_IRIS_SO;
+      libnam[n ++] = (char *) DBX_CACHE_DYLIB;
+      libnam[n ++] = (char *) DBX_CACHE_SO;
+#else
+      libnam[n ++] = (char *) DBX_IRIS_SO;
+      libnam[n ++] = (char *) DBX_IRIS_DYLIB;
+      libnam[n ++] = (char *) DBX_CACHE_SO;
+      libnam[n ++] = (char *) DBX_CACHE_DYLIB;
+#endif
+#endif
+   }
+   else {
+#if defined(_WIN32)
+      libnam[n ++] = (char *) DBX_CACHE_DLL;
+      libnam[n ++] = (char *) DBX_IRIS_DLL;
+#else
+#if defined(MACOSX)
+      libnam[n ++] = (char *) DBX_CACHE_DYLIB;
+      libnam[n ++] = (char *) DBX_CACHE_SO;
+      libnam[n ++] = (char *) DBX_IRIS_DYLIB;
+      libnam[n ++] = (char *) DBX_IRIS_SO;
+#else
+      libnam[n ++] = (char *) DBX_CACHE_SO;
+      libnam[n ++] = (char *) DBX_CACHE_DYLIB;
+      libnam[n ++] = (char *) DBX_IRIS_SO;
+      libnam[n ++] = (char *) DBX_IRIS_DYLIB;
+#endif
+#endif
+   }
+
+   libnam[n ++] = NULL;
+   strcpy(pcon->p_isc_so->libnam, pcon->p_isc_so->libdir);
+   len = (int) strlen(pcon->p_isc_so->libnam);
+
+   for (n = 0; libnam[n]; n ++) {
+      strcpy(pcon->p_isc_so->libnam + len, libnam[n]);
+      if (!n) {
+         strcpy(primlib, pcon->p_isc_so->libnam);
+      }
+
+      pcon->p_isc_so->p_library = dbx_dso_load(pcon->p_isc_so->libnam);
+      if (pcon->p_debug->debug == 1) {
+         fprintf(pcon->p_debug->p_fdebug, "\r\n       >>> %p==dbx_dso_load(%s)", pcon->p_isc_so->p_library, pcon->p_isc_so->libnam);
+         fflush(pcon->p_debug->p_fdebug);
+      }
+      if (pcon->p_isc_so->p_library) {
+         if (strstr(libnam[n], "iris")) {
+            pcon->p_isc_so->iris = 1;
+            strcpy(pcon->p_isc_so->funprfx, "Iris");
+            strcpy(pcon->p_isc_so->dbname, "IRIS");
+         }
+         T_STRCPY(pcon->error, _dbxso(pcon->error), "");
+         pcon->error_code = 0;
+         break;
+      }
+
+      if (!n) {
+         int len1, len2;
+         char *p;
+#if defined(_WIN32)
+         DWORD errorcode;
+         LPVOID lpMsgBuf;
+
+         lpMsgBuf = NULL;
+         errorcode = GetLastError();
+         sprintf(pcon->error, "Error loading %s Library: %s; Error Code : %ld", pcon->p_isc_so->dbname, primlib, errorcode);
+         len2 = (int) strlen(pcon->error);
+         len1 = FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                        NULL,
+                        errorcode,
+                        /* MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), */
+                        MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US),
+                        (LPTSTR) &lpMsgBuf,
+                        0,
+                        NULL 
+                        );
+         if (lpMsgBuf && len1 > 0 && (DBX_ERROR_SIZE - len2) > 30) {
+            strncpy(primerr, (const char *) lpMsgBuf, DBX_ERROR_SIZE - 1);
+            p = strstr(primerr, "\r\n");
+            if (p)
+               *p = '\0';
+            len1 = (DBX_ERROR_SIZE - (len2 + 10));
+            if (len1 < 1)
+               len1 = 0;
+            primerr[len1] = '\0';
+            p = strstr(primerr, "%1");
+            if (p) {
+               *p = 'I';
+               *(p + 1) = 't';
+            }
+            strcat(pcon->error, " (");
+            strcat(pcon->error, primerr);
+            strcat(pcon->error, ")");
+         }
+         if (lpMsgBuf)
+            LocalFree(lpMsgBuf);
+#else
+         p = (char *) dlerror();
+         sprintf(primerr, "Cannot load %s library: Error Code: %d", pcon->p_isc_so->dbname, errno);
+         len2 = strlen(pcon->error);
+         if (p) {
+            strncpy(primerr, p, DBX_ERROR_SIZE - 1);
+            primerr[DBX_ERROR_SIZE - 1] = '\0';
+            len1 = (DBX_ERROR_SIZE - (len2 + 10));
+            if (len1 < 1)
+               len1 = 0;
+            primerr[len1] = '\0';
+            strcat(pcon->error, " (");
+            strcat(pcon->error, primerr);
+            strcat(pcon->error, ")");
+         }
+#endif
+      }
+   }
+
+   if (!pcon->p_isc_so->p_library) {
+      goto isc_load_library_exit;
+   }
+
+   sprintf(fun, "%sSetDir", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheSetDir = (int (*) (char *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheSetDir) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+
+   sprintf(fun, "%sSecureStartA", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheSecureStartA = (int (*) (CACHE_ASTRP, CACHE_ASTRP, CACHE_ASTRP, unsigned long, int, CACHE_ASTRP, CACHE_ASTRP)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheSecureStartA) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+
+   sprintf(fun, "%sEnd", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheEnd = (int (*) (void)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheEnd) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+
+   sprintf(fun, "%sExStrNew", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheExStrNew = (unsigned char * (*) (CACHE_EXSTRP, int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheExStrNew) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sExStrNewW", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheExStrNewW = (unsigned short * (*) (CACHE_EXSTRP, int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheExStrNewW) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sExStrNewH", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheExStrNewH = (wchar_t * (*) (CACHE_EXSTRP, int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+
+   sprintf(fun, "%sPushExStr", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushExStr = (int (*) (CACHE_EXSTRP)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePushExStr) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPushExStrW", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushExStrW = (int (*) (CACHE_EXSTRP)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePushExStrW) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPushExStrH", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushExStrH = (int (*) (CACHE_EXSTRP)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+
+   sprintf(fun, "%sPopExStr", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePopExStr = (int (*) (CACHE_EXSTRP)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePopExStr) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPopExStrW", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePopExStrW = (int (*) (CACHE_EXSTRP)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePopExStrW) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPopExStrH", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePopExStrH = (int (*) (CACHE_EXSTRP)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+
+   sprintf(fun, "%sExStrKill", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheExStrKill = (int (*) (CACHE_EXSTRP)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheExStrKill) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPushStr", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushStr = (int (*) (int, Callin_char_t *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePushStr) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPushStrW", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushStrW = (int (*) (int, short *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePushStrW) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPushStrH", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushStrH = (int (*) (int, wchar_t *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+
+   sprintf(fun, "%sPopStr", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePopStr = (int (*) (int *, Callin_char_t **)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePopStr) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPopStrW", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePopStrW = (int (*) (int *, short **)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePopStrW) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPopStrH", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePopStrH = (int (*) (int *, wchar_t **)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+
+   sprintf(fun, "%sPushDbl", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushDbl = (int (*) (double)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePushDbl) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPushIEEEDbl", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushIEEEDbl = (int (*) (double)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePushIEEEDbl) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPopDbl", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePopDbl = (int (*) (double *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePopDbl) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPushInt", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushInt = (int (*) (int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePushInt) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPopInt", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePopInt = (int (*) (int *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePopInt) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+
+   sprintf(fun, "%sPushInt64", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushInt64 = (int (*) (CACHE_INT64)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePushInt64) {
+      pcon->p_isc_so->p_CachePushInt64 = (int (*) (CACHE_INT64)) pcon->p_isc_so->p_CachePushInt;
+   }
+   sprintf(fun, "%sPushInt64", pcon->p_isc_so->funprfx);
+   if (!pcon->p_isc_so->p_CachePushInt64) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPopInt64", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePopInt64 = (int (*) (CACHE_INT64 *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePopInt64) {
+      pcon->p_isc_so->p_CachePopInt64 = (int (*) (CACHE_INT64 *)) pcon->p_isc_so->p_CachePopInt;
+   }
+   if (!pcon->p_isc_so->p_CachePopInt64) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+
+   sprintf(fun, "%sPushGlobal", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushGlobal = (int (*) (int, const Callin_char_t *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePushGlobal) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPushGlobalX", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushGlobalX = (int (*) (int, const Callin_char_t *, int, const Callin_char_t *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePushGlobalX) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sGlobalGet", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheGlobalGet = (int (*) (int, int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheGlobalGet) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sGlobalSet", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheGlobalSet = (int (*) (int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheGlobalSet) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sGlobalData", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheGlobalData = (int (*) (int, int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheGlobalData) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sGlobalKill", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheGlobalKill = (int (*) (int, int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheGlobalKill) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sGlobalOrder", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheGlobalOrder = (int (*) (int, int, int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheGlobalOrder) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sGlobalQuery", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheGlobalQuery = (int (*) (int, int, int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheGlobalQuery) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sGlobalIncrement", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheGlobalIncrement = (int (*) (int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheGlobalIncrement) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sGlobalRelease", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheGlobalRelease = (int (*) (void)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheGlobalRelease) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sAcquireLock", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheAcquireLock = (int (*) (int, int, int, int *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheAcquireLock) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sReleaseAllLocks", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheReleaseAllLocks = (int (*) (void)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheReleaseAllLocks) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sReleaseLock", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheReleaseLock = (int (*) (int, int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CacheReleaseLock) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPushLock", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushLock = (int (*) (int, const Callin_char_t *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePushLock) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+
+   sprintf(fun, "%sAddGlobal", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheAddGlobal = (int (*) (int, const Callin_char_t *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sAddGlobalDescriptor", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheAddGlobalDescriptor = (int (*) (int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sAddSSVN", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheAddSSVN = (int (*) (int, const Callin_char_t *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sAddSSVNDescriptor", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheAddSSVNDescriptor = (int (*) (int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sMerge", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheMerge = (int (*) (void)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+
+   if (pcon->p_isc_so->p_CacheAddGlobal && pcon->p_isc_so->p_CacheAddGlobalDescriptor && pcon->p_isc_so->p_CacheAddSSVN && pcon->p_isc_so->p_CacheAddSSVNDescriptor && pcon->p_isc_so->p_CacheMerge) {
+      pcon->p_isc_so->merge_enabled = 1;
+   }
+
+   sprintf(fun, "%sPushFunc", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushFunc = (int (*) (unsigned int *, int, const Callin_char_t *, int, const Callin_char_t *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sExtFun", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheExtFun = (int (*) (unsigned int, int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sPushRtn", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushRtn = (int (*) (unsigned int *, int, const Callin_char_t *, int, const Callin_char_t *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sDoFun", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheDoFun = (int (*) (unsigned int, int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sDoRtn", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheDoRtn = (int (*) (unsigned int, int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+
+   if (pcon->p_isc_so->p_CachePushFunc && pcon->p_isc_so->p_CacheExtFun && pcon->p_isc_so->p_CachePushRtn && pcon->p_isc_so->p_CacheDoFun && pcon->p_isc_so->p_CacheDoRtn) {
+      pcon->p_isc_so->functions_enabled = 1;
+      if (pcon->p_zv->version[0]) {
+      pcon->p_isc_so->functions_enabled = 0;
+      }
+   }
+
+   sprintf(fun, "%sCloseOref", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheCloseOref = (int (*) (unsigned int oref)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sIncrementCountOref", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheIncrementCountOref = (int (*) (unsigned int oref)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sPopOref", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePopOref = (int (*) (unsigned int * orefp)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sPushOref", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushOref = (int (*) (unsigned int oref)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+
+   sprintf(fun, "%sInvokeMethod", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheInvokeMethod = (int (*) (int narg)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sPushMethod", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushMethod = (int (*) (unsigned int oref, int mlen, const Callin_char_t * mptr, int flg)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sInvokeClassMethod", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheInvokeClassMethod = (int (*) (int narg)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sPushClassMethod", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushClassMethod = (int (*) (int clen, const Callin_char_t * cptr, int mlen, const Callin_char_t * mptr, int flg)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+
+   sprintf(fun, "%sGetProperty", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheGetProperty = (int (*) (void)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sSetProperty", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheSetProperty = (int (*) (void)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sPushProperty", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushProperty = (int (*) (unsigned int oref, int plen, const Callin_char_t * pptr)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+
+   if (pcon->p_isc_so->p_CacheCloseOref && pcon->p_isc_so->p_CacheIncrementCountOref && pcon->p_isc_so->p_CachePopOref && pcon->p_isc_so->p_CachePushOref
+         && pcon->p_isc_so->p_CacheInvokeMethod && pcon->p_isc_so->p_CachePushMethod && pcon->p_isc_so->p_CacheInvokeClassMethod && pcon->p_isc_so->p_CachePushClassMethod
+         && pcon->p_isc_so->p_CacheGetProperty && pcon->p_isc_so->p_CacheSetProperty && pcon->p_isc_so->p_CachePushProperty) {
+      pcon->p_isc_so->objects_enabled = 1;
+      if (pcon->p_zv->version[0]) {
+         pcon->p_isc_so->objects_enabled = 0;
+      }
+   }
+
+   sprintf(fun, "%sType", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheType = (int (*) (void)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+
+   sprintf(fun, "%sEvalA", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheEvalA = (int (*) (CACHE_ASTRP volatile)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sExecuteA", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheExecuteA = (int (*) (CACHE_ASTRP volatile)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sConvert", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheConvert = (int (*) (unsigned long, void *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+
+   sprintf(fun, "%sErrorA", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheErrorA = (int (*) (CACHE_ASTRP, CACHE_ASTRP, int *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sErrxlateA", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheErrxlateA = (int (*) (int, CACHE_ASTRP)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+
+   sprintf(fun, "%sEnableMultiThread", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheEnableMultiThread = (int (*) (void)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (pcon->p_isc_so->p_CacheEnableMultiThread) {
+      pcon->p_isc_so->multithread_enabled = 1;
+   }
+   else {
+      pcon->p_isc_so->multithread_enabled = 0;
+   }
+
+   pcon->p_isc_so->loaded = 1;
+
+isc_load_library_exit:
+
+   if (pcon->error[0]) {
+      pcon->p_isc_so->loaded = 0;
+      pcon->error_code = 1009;
+      strcpy((char *) pcon->output_val.svalue.buf_addr, "0");
+      result = CACHE_NOCON;
+
+      return result;
+   }
+
+   rc = pcon->p_isc_so->p_CacheSetDir(pcon->path);
+
+   T_STRCPY((char *) pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_alloc, "1");
+   pcon->p_isc_so->loaded = 2;
+   result = CACHE_SUCCESS;
+
+   return result;
+}
+
+
+
+int isc_authenticate(DBXCON *pcon)
+{
+   unsigned char reopen;
+   int termflag, timeout;
+   char buffer[256];
+
+   termflag = 0;
+	timeout = 15;
+	CACHESTR pin, *ppin;
+	CACHESTR pout, *ppout;
+	CACHESTR pusername;
+	CACHESTR ppassword;
+	CACHESTR pexename;
+	int rc;
+
+   reopen = 0;
+
+isc_authenticate_reopen:
+
+   pcon->error_code = 0;
+   *pcon->error = '\0';
+	T_STRCPY((char *) pexename.str, _dbxso(pexename.str), "Node.JS");
+	pexename.len = (unsigned short) strlen((char *) pexename.str);
+/*
+	T_STRCPY((char *) pin.str, "//./nul");
+	T_STRCPY((char *) pout.str, "//./nul");
+	pin.len = (unsigned short) strlen((char *) pin.str);
+	pout.len = (unsigned short) strlen((char *) pout.str);
+*/
+   ppin = NULL;
+
+//pcon->input_device[0] = '\0';
+//pcon->output_device[0] = '\0';
+   if (pcon->input_device[0]) {
+	   T_STRCPY(buffer, _dbxso(buffer), pcon->input_device);
+      dbx_lcase(buffer);
+      if (!strcmp(buffer, "stdin")) {
+	      T_STRCPY((char *) pin.str, _dbxso(pin.str), "");
+         ppin = &pin;
+      }
+      else if (strcmp(pcon->input_device, DBX_NULL_DEVICE)) {
+	      T_STRCPY((char *) pin.str, _dbxso(pin.str), pcon->input_device);
+         ppin = &pin;
+      }
+      if (ppin)
+	      ppin->len = (unsigned short) strlen((char *) ppin->str);
+   }
+   ppout = NULL;
+   if (pcon->output_device[0]) {
+	   T_STRCPY(buffer, _dbxso(buffer), pcon->output_device);
+      dbx_lcase(buffer);
+      if (!strcmp(buffer, "stdout")) {
+	      T_STRCPY((char *) pout.str, _dbxso(pout.str), "");
+         ppout = &pout;
+      }
+      else if (strcmp(pcon->output_device, DBX_NULL_DEVICE)) {
+	      T_STRCPY((char *) pout.str, _dbxso(pout.str), pcon->output_device);
+         ppout = &pout;
+      }
+      if (ppout)
+	      ppout->len = (unsigned short) strlen((char *) ppout->str);
+   }
+
+   if (ppin && ppout) { 
+      termflag = CACHE_TTALL|CACHE_PROGMODE;
+   }
+   else {
+      termflag = CACHE_TTNEVER|CACHE_PROGMODE;
+   }
+
+	T_STRCPY((char *) pusername.str, _dbxso(pusername.str), pcon->username);
+	T_STRCPY((char *) ppassword.str, _dbxso(ppassword.str), pcon->password);
+
+	pusername.len = (unsigned short) strlen((char *) pusername.str);
+	ppassword.len = (unsigned short) strlen((char *) ppassword.str);
+
+	/* Authenticate using a real username */
+
+/*
+#if !defined(_WIN32)
+{
+   int ret;
+   pthread_attr_t tattr;
+   size_t size;
+   ret = pthread_getattr_np(pthread_self(), &tattr);
+   ret = pthread_attr_getstacksize(&tattr, &size);   printf("\r\n*** pthread_attr_getstacksize (main) %x *** ret=%d; size=%u\r\n", (unsigned long) pthread_self(), ret, size);
+}
+#endif
+*/
+
+#if !defined(_WIN32)
+   signal(SIGUSR1, SIG_IGN);
+#endif
+
+	rc = pcon->p_isc_so->p_CacheSecureStartA(&pusername, &ppassword, &pexename, termflag, timeout, ppin, ppout);
+
+   if (pcon->p_debug->debug == 1) {
+/*
+      fprintf(pcon->p_debug->p_fdebug, "\r\n       >>> %d==%sSecureStartA(%p(%s), %p(%s), %p(%s), \r\n%d, %d, %p(%s), %p(%s))", rc, pcon->p_isc_so->funprfx, &pusername, pusername.str, &ppassword, ppassword.str, &pexename, pexename.str, termflag, timeout, &pin, pin.str, &pout, pout.str);
+*/
+      fprintf(pcon->p_debug->p_fdebug, "\r\n       >>> %d==%sSecureStartA(%p(%s),", rc, pcon->p_isc_so->funprfx, &pusername, (char *) pusername.str);
+      fprintf(pcon->p_debug->p_fdebug, "\r\n                                 %p(%s),", &ppassword, (char *) ppassword.str);
+      fprintf(pcon->p_debug->p_fdebug, "\r\n                                 %p(%s),", &pexename, (char *) pexename.str);
+      fprintf(pcon->p_debug->p_fdebug, "\r\n                                 %d, %d,", termflag, timeout);
+      fprintf(pcon->p_debug->p_fdebug, "\r\n                                 %p(%s),", ppin, ppin ? (char *) ppin->str : "null");
+      fprintf(pcon->p_debug->p_fdebug, "\r\n                                 %p(%s))", ppout, ppout ? (char *) ppout->str : "null");
+
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+	if (rc != CACHE_SUCCESS) {
+      pcon->error_code = rc;
+	   if (rc == CACHE_ACCESSDENIED) {
+	      T_SPRINTF(pcon->error, _dbxso(pcon->error), "Authentication: Access Denied : Check the audit log for the real authentication error (%d)\n", rc);
+	      return 0;
+	   }
+	   if (rc == CACHE_CHANGEPASSWORD) {
+	      T_SPRINTF(pcon->error, _dbxso(pcon->error), "Authentication: Password Change Required (%d)\n", rc);
+	      return 0;
+	   }
+	   if (rc == CACHE_ALREADYCON) {
+	      T_SPRINTF(pcon->error, _dbxso(pcon->error), "Authentication: Already Connected (%d)\n", rc);
+	      return 1;
+	   }
+	   if (rc == CACHE_CONBROKEN) {
+	      T_SPRINTF(pcon->error, _dbxso(pcon->error), "Authentication: Connection was formed and then broken by the server. (%d)\n", rc);
+	      return 0;
+	   }
+
+	   if (rc == CACHE_FAILURE) {
+	      T_SPRINTF(pcon->error, _dbxso(pcon->error), "Authentication: An unexpected error has occurred. (%d)\n", rc);
+	      return 0;
+	   }
+	   if (rc == CACHE_STRTOOLONG) {
+	      T_SPRINTF(pcon->error, _dbxso(pcon->error), "Authentication: prinp or prout is too long. (%d)\n", rc);
+	      return 0;
+	   }
+	   T_SPRINTF(pcon->error, _dbxso(pcon->error), "Authentication: Failed (%d)\n", rc);
+	   return 0;
+   }
+
+
+   {
+      CACHE_ASTR retval;
+      CACHE_ASTR expr;
+
+      T_STRCPY((char *) expr.str, _dbxso(expr.str), "$ZVersion");
+      expr.len = (unsigned short) strlen((char *) expr.str);
+      rc = pcon->p_isc_so->p_CacheEvalA(&expr);
+
+      if (rc == CACHE_CONBROKEN)
+         reopen = 1;
+      if (rc == CACHE_SUCCESS) {
+         retval.len = 256;
+         rc = pcon->p_isc_so->p_CacheConvert(CACHE_ASTRING, &retval);
+
+         if (rc == CACHE_CONBROKEN)
+            reopen = 1;
+         if (rc == CACHE_SUCCESS) {
+            isc_parse_zv((char *) retval.str, pcon->p_zv);
+            T_SPRINTF(pcon->p_zv->version, _dbxso(pcon->p_zv->version), "%d.%d build %d", pcon->p_zv->majorversion, pcon->p_zv->minorversion, pcon->p_zv->dbx_build);
+         }
+      }
+   }
+
+   if (reopen) {
+      goto isc_authenticate_reopen;
+   }
+
+   rc = isc_change_namespace(pcon, pcon->nspace);
+
+   if (pcon->p_isc_so->p_CacheEnableMultiThread) {
+      rc = pcon->p_isc_so->p_CacheEnableMultiThread();
+   }
+   else {
+      rc = -1;
+   }
+
+   return 1;
+}
+
+
+int isc_open(DBXCON *pcon)
+{
+   int rc, error_code, result;
+
+   error_code = 0;
+
+   if (!pcon->p_isc_so) {
+      pcon->p_isc_so = (DBXISCSO *) dbx_malloc(sizeof(DBXISCSO), 0);
+      if (!pcon->p_isc_so) {
+         T_STRCPY(pcon->error, _dbxso(pcon->error), "No Memory");
+         pcon->error_code = 1009; 
+         result = CACHE_NOCON;
+         return result;
+      }
+      memset((void *) pcon->p_isc_so, 0, sizeof(DBXISCSO));
+      pcon->p_isc_so->loaded = 0;
+   }
+
+   if (pcon->p_isc_so->loaded == 2) {
+      strcpy(pcon->error, "Cannot create multiple connections to the database");
+      pcon->error_code = 1009; 
+      strncpy(pcon->error, pcon->error, DBX_ERROR_SIZE - 1);
+      pcon->error[DBX_ERROR_SIZE - 1] = '\0';
+      strcpy((char *) pcon->output_val.svalue.buf_addr, "0");
+      rc = CACHE_NOCON;
+      goto isc_open_exit;
+   }
+
+   if (!pcon->p_isc_so->loaded) {
+      rc = isc_load_library(pcon);
+      if (rc != CACHE_SUCCESS) {
+         goto isc_open_exit;
+      }
+   }
+
+   rc = pcon->p_isc_so->p_CacheSetDir(pcon->path);
+
+   if (pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n       >>> %d==CacheSetDir(%s)", rc, pcon->path);
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   if (!isc_authenticate(pcon)) {
+
+      pcon->error_code = error_code;
+      strcpy((char *) pcon->output_val.svalue.buf_addr, "0");
+      rc = CACHE_NOCON;
+   }
+   else {
+      strcpy((char *) pcon->output_val.svalue.buf_addr, "1");
+      pcon->p_isc_so->loaded = 2;
+      rc = CACHE_SUCCESS;
+   }
+
+   if (pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n");
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+isc_open_exit:
+
+   if (rc == CACHE_SUCCESS) {
+      dbx_create_string(&(pcon->output_val.svalue), (void *) &rc, DBX_TYPE_INT);
+   }
+   else {
+      dbx_create_string(&(pcon->output_val.svalue), (void *) pcon->error, DBX_TYPE_STR8);
+   }
+
+   return rc;
+}
+
+
+int isc_parse_zv(char *zv, DBXZV * p_sv)
+{
+   int result;
+   double dbx_version;
+   char *p, *p1, *p2;
+
+   p_sv->dbx_version = 0;
+   p_sv->majorversion = 0;
+   p_sv->minorversion = 0;
+   p_sv->dbx_build = 0;
+   p_sv->vnumber = 0;
+
+   p = strstr(zv, "Cache");
+   if (p) {
+      p_sv->dbtype = DBX_DBTYPE_CACHE;
+   }
+   else {
+     p = strstr(zv, "IRIS");
+      if (p) {
+         p_sv->dbtype = DBX_DBTYPE_IRIS;
+      }
+   }
+
+   result = 0;
+   p = zv;
+   dbx_version = 0;
+   while (*(++ p)) {
+      if (*(p - 1) == ' ' && isdigit((int) (*p))) {
+         dbx_version = strtod(p, NULL);
+         if (*(p + 1) == '.' && dbx_version >= 1.0 && dbx_version <= 5.2)
+            break;
+         else if (*(p + 4) == '.' && dbx_version >= 2000.0)
+            break;
+         dbx_version = 0;
+      }
+   }
+
+   if (dbx_version > 0) {
+      p_sv->dbx_version = dbx_version;
+      p_sv->majorversion = (int) strtol(p, NULL, 10);
+      p1 = strstr(p, ".");
+      if (p1) {
+         p_sv->minorversion = (int) strtol(p1 + 1, NULL, 10);
+      }
+      p2 = strstr(p, "Build ");
+      if (p2) {
+         p_sv->dbx_build = (int) strtol(p2 + 6, NULL, 10);
+      }
+
+      if (p_sv->majorversion >= 2007)
+         p_sv->vnumber = (((p_sv->majorversion - 2000) * 100000) + (p_sv->minorversion * 10000) + p_sv->dbx_build);
+      else
+         p_sv->vnumber = ((p_sv->majorversion * 100000) + (p_sv->minorversion * 10000) + p_sv->dbx_build);
+
+      result = 1;
+   }
+
+   return result;
+}
+
+
+int isc_change_namespace(DBXCON *pcon, char *nspace)
+{
+   int rc, len;
+   CACHE_ASTR expr;
+
+   len = (int) strlen(nspace);
+   if (len == 0 || len > 64) {
+      return CACHE_ERNAMSP;
+   }
+   if (pcon->p_isc_so->p_CacheExecuteA == NULL) {
+      return CACHE_ERNAMSP;
+   }
+
+   T_SPRINTF((char *) expr.str, _dbxso(expr.str), "ZN \"%s\"", nspace); /* changes namespace */
+   expr.len = (unsigned short) strlen((char *) expr.str);
+
+   ////dbx_mutex_lock(pcon->p_mutex, 0);
+
+   rc = pcon->p_isc_so->p_CacheExecuteA(&expr);
+
+   ////dbx_mutex_unlock(pcon->p_mutex);
+
+   if (pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n       >>> %d==%sExecuteA(%p(%s))", rc, pcon->p_isc_so->funprfx, &expr, expr.str);
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   return rc;
+}
+
+
+int isc_cleanup(DBXCON *pcon)
+{
+   int n, rc;
+
+   for (n = 0; n < DBX_MAXARGS; n ++) {
+      if (pcon->args[n].cvalue.pstr) {
+         /* printf("\r\ncache_cleanup %d &zstr=%p; pstr=%p;", n, &(pcon->cargs[n].zstr), pcon->cargs[n].pstr); */
+         rc = pcon->p_isc_so->p_CacheExStrKill(&(pcon->args[n].cvalue.zstr));
+
+         if (pcon->p_debug->debug == 1) {
+            fprintf(pcon->p_debug->p_fdebug, "\r\n       >>> %d==%sExStrKill(%p)", rc, pcon->p_isc_so->funprfx, &(pcon->args[n].cvalue.zstr));
+            fflush(pcon->p_debug->p_fdebug);
+         }
+
+         pcon->args[n].cvalue.pstr = NULL;
+      }
+   }
+   return 1;
+}
+
+
+int isc_pop_value(DBXCON *pcon, DBXVAL *value, int required_type)
+{
+   int rc, rc1, ex, ctype;
+   unsigned int n, max, len;
+   char *pstr8, *p8, *outstr8;
+   CACHE_EXSTR zstr;
+
+   ex = 0;
+   zstr.len = 0;
+   zstr.str.ch = NULL;
+   outstr8 = NULL;
+   ctype = CACHE_ASTRING;
+
+   if (pcon->p_isc_so->p_CacheType) {
+      ctype = pcon->p_isc_so->p_CacheType();
+      if (pcon->p_debug->debug == 1) {
+         fprintf(pcon->p_debug->p_fdebug, "\r\n       >>> %d==%sType()", ctype, pcon->p_isc_so->funprfx);
+         fflush(pcon->p_debug->p_fdebug);
+      }
+
+      if (ctype == CACHE_OREF) {
+         rc = pcon->p_isc_so->p_CachePopOref(&(value->num.oref));
+
+         value->type = DBX_TYPE_OREF;
+         T_SPRINTF((char *) value->svalue.buf_addr, value->svalue.len_alloc, "%d", value->num.oref);
+         value->svalue.len_alloc = (int) strlen((char *) value->svalue.buf_addr);
+         if (pcon->p_debug->debug == 1) {
+            fprintf(pcon->p_debug->p_fdebug, "\r\n       >>> %d==%sPopOref(%d)", rc, pcon->p_isc_so->funprfx, value->num.oref);
+            fflush(pcon->p_debug->p_fdebug);
+         }
+         return rc;
+      }
+   }
+   else {
+      ctype = CACHE_ASTRING;
+   }
+
+   if (ex) {
+
+      rc = pcon->p_isc_so->p_CachePopExStr(&zstr);
+      len = zstr.len;
+      outstr8 = (char *) zstr.str.ch;
+
+      if (pcon->p_debug->debug == 1) {
+         fprintf(pcon->p_debug->p_fdebug, "\r\n       >>> %d==%sPopExStr(%p {len=%d;str=%p})", rc, pcon->p_isc_so->funprfx, &zstr, zstr.len, (void *) zstr.str.ch);
+         fflush(pcon->p_debug->p_fdebug);
+      }
+   }
+   else {
+
+      rc = pcon->p_isc_so->p_CachePopStr((int *) &len, (Callin_char_t **) &outstr8);
+
+      if (pcon->p_debug->debug == 1) {
+         fprintf(pcon->p_debug->p_fdebug, "\r\n       >>> %d==%sPopStr(%d, %p)", rc, pcon->p_isc_so->funprfx, len, outstr8);
+         fflush(pcon->p_debug->p_fdebug);
+      }
+   }
+
+   if (rc != CACHE_SUCCESS) {
+      strcpy(pcon->error, "Invalid String <WIDE CHAR> - Check character set");
+      pcon->error_code = CACHE_BAD_STRING;
+      if (ex) {
+         rc1 = pcon->p_isc_so->p_CacheExStrKill(&zstr);
+      }
+      goto isc_pop_value_exit;
+   }
+
+   max = 0;
+   if (value->svalue.len_alloc > 8) {
+      max = (value->svalue.len_alloc - 2);
+   }
+
+   pstr8 = (char *) value->svalue.buf_addr;
+   if (len >= max) {
+      p8 = (char *) dbx_malloc(sizeof(char) * (len + 2), 301);
+      if (p8) {
+         if (value->svalue.buf_addr)
+            dbx_free((void *) value->svalue.buf_addr, 301);
+         value->svalue.buf_addr = (char *) p8;
+         pstr8 = (char *) value->svalue.buf_addr;
+         max = len;
+      }
+   }
+   for (n = 0; n < len; n ++) {
+      if (n > max)
+         break;
+      pstr8[n] = (char) outstr8[n];
+   }
+   pstr8[n] = '\0';
+
+   value->svalue.len_used = n;
+
+   if (ex) {
+      rc1 = pcon->p_isc_so->p_CacheExStrKill(&zstr);
+   }
+
+
+   if (pcon->p_debug->debug == 1) {
+      char buffer[128];
+      if (value->svalue.len_used > 60) {
+         T_STRNCPY(buffer, _dbxso(buffer), (char *) value->svalue.buf_addr, 60);
+         buffer[60] = '\0';
+         T_STRCAT(buffer, _dbxso(buffer), " ...");
+      }
+      else {
+         T_STRCPY(buffer, _dbxso(buffer), (char *) value->svalue.buf_addr);
+      }
+      fprintf(pcon->p_debug->p_fdebug, "\r\n           >>> %s", buffer);
+      fflush(pcon->p_debug->p_fdebug);
+      if (ex) {
+         fprintf(pcon->p_debug->p_fdebug, "\r\n       >>> %d==%sExStrKill(%p)", rc1, pcon->p_isc_so->funprfx, &zstr);
+      }
+   }
+
+isc_pop_value_exit:
+
+   return rc;
+}
+
+
+char * isc_callin_message(DBXCON *pcon, int error_code)
+{
+   char *p;
+
+   switch (error_code) {
+      case CACHE_SUCCESS:
+         p = (char *) "Operation completed successfully!";
+         break;
+      case CACHE_ACCESSDENIED:
+         p = (char *) "<ACCESS DENIED>Authentication has failed. Check the audit log for the real authentication error.";
+         break;
+      case CACHE_ALREADYCON:
+         p = (char *) "Connection already existed.";
+         break;
+      case CACHE_CHANGEPASSWORD:
+         p = (char *) "Password change required.";
+         break;
+      case CACHE_CONBROKEN:
+         p = (char *) "<NOCON>Connection was broken by the server. Check arguments for validity.";
+         break;
+      case CACHE_FAILURE:
+         p = (char *) "An unexpected error has occurred.";
+         break;
+      case CACHE_STRTOOLONG:
+         p = (char *) "<MAXSTRING>String is too long.";
+         break;
+      case CACHE_NOCON:
+         p = (char *) "<NOCON>No connection has been established.";
+         break;
+      case CACHE_ERSYSTEM:
+         p = (char *) "<SYSTEM>Either the server generated a <SYSTEM> error, or callin detected an internal data inconsistency.";
+         break;
+      case CACHE_ERARGSTACK:
+         p = (char *) "<STACK>Argument stack overflow.";
+         break;
+      case CACHE_ERSTRINGSTACK:
+         p = (char *) "<STRINGSTACK>String stack overflow.";
+         break;
+      case CACHE_ERPROTECT:
+         p = (char *) "<PROTECT>Protection violation.";
+         break;
+      case CACHE_ERUNDEF:
+         p = (char *) "<UNDEFINED>Global node is undefined";
+         break;
+      case CACHE_ERUNIMPLEMENTED:
+         p = (char *) "<UNIMPLEMENTED>String is undefined OR feature is not implemented.";
+         break;
+      case CACHE_ERSUBSCR:
+         p = (char *) "<SUBSCRIPT>Subscript error in Global node (subscript null/empty or too long)";
+         break;
+      case CACHE_ERNOROUTINE:
+         p = (char *) "<NOROUTINE>Routine does not exist";
+         break;
+      case CACHE_ERNOLINE:
+         p = (char *) "<NOLINE>Function does not exist in routine";
+         break;
+      case CACHE_ERPARAMETER:
+         p = (char *) "<PARAMETER>Function arguments error";
+         break;
+      case CACHE_BAD_GLOBAL:
+         p = (char *) "<SYNTAX>Invalid global name";
+         break;
+      case CACHE_BAD_NAMESPACE:
+         p = (char *) "<NAMESPACE>Invalid NameSpace name";
+         break;
+      case CACHE_BAD_FUNCTION:
+         p = (char *) "<FUNCTION>Invalid function name";
+         break;
+      case CACHE_ERNOCLASS:
+         p = (char *) "<CLASS DOES NOT EXIST>Class does not exist";
+         break;
+      case CACHE_ERBADOREF:
+         p = (char *) "<INVALID OREF>Invalid Object Reference";
+         break;
+      case CACHE_ERNOMETHOD:
+         p = (char *) "<METHOD DOES NOT EXIST>Method does not exist";
+         break;
+      case CACHE_ERNOPROPERTY:
+         p = (char *) "<PROPERTY DOES NOT EXIST>Property does not exist";
+         break;
+      case CACHE_ETIMEOUT:
+         p = (char *) "<TIMEOUT>Operation timed out";
+         break;
+      case CACHE_ERWIDECHAR:
+         p = (char *) "<WIDE CHAR>Invalid String - Check character set";
+         break;
+      case CACHE_BAD_STRING:
+         p = (char *) "<SYNTAX>Invalid string";
+         break;
+      case CACHE_ERNAMSP:
+         p = (char *) "<NAMESPACE>Invalid Namespace";
+         break;
+      default:
+         p = (char *)  "Server Error";
+         break;
+   }
+   return p;
+}
+
+
+int isc_error_message(DBXCON *pcon, int error_code)
+{
+   int size, size1, len, rc;
+   CACHE_ASTR *pcerror;
+
+   size = DBX_ERROR_SIZE;
+
+   if (pcon) {
+      if (error_code < 0) {
+         pcon->error_code = 900 + (error_code * -1);
+      }
+      else {
+         pcon->error_code = error_code;
+      }
+   }
+
+   if (error_code == CACHE_BAD_GLOBAL) {
+      if (pcon->error[0])
+         return 0;
+   }
+   if (error_code == CACHE_BAD_FUNCTION) {
+      if (pcon->error[0])
+         return 0;
+   }
+   if (error_code == CACHE_BAD_STRING) {
+      if (pcon->error[0])
+         return 0;
+   }
+   pcon->error[0] = '\0';
+
+   size1 = size;
+
+      pcerror = (CACHE_ASTR *) dbx_malloc(sizeof(CACHE_ASTR), 801);
+      if (pcerror) {
+         pcerror->str[0] = '\0';
+         pcerror->len = 50;
+         rc = pcon->p_isc_so->p_CacheErrxlateA(error_code, pcerror);
+         if (pcon->p_debug->debug == 1) {
+            fprintf(pcon->p_debug->p_fdebug, "\r\n   >>> %d==%sErrxlateA(%d)", rc, pcon->p_isc_so->funprfx, error_code);
+            fflush(pcon->p_debug->p_fdebug);
+         }
+         pcerror->str[50] = '\0';
+
+         if (pcerror->len > 0) {
+            len = pcerror->len;
+            if (len >= DBX_ERROR_SIZE) {
+               len = DBX_ERROR_SIZE - 1;
+            }
+            T_STRNCPY(pcon->error, _dbxso(pcon->error), (char *) pcerror->str, len);
+            pcon->error[len] = '\0';
+         }
+         dbx_free((void *) pcerror, 801);
+         size1 -= (int) strlen(pcon->error);
+      }
+ 
+   {
+      char *p;
+      p = (char *) isc_callin_message(pcon, error_code);
+      if (*p == '<') {
+         p = strstr(p, ">");
+         if (p) {
+            p ++;
+         }
+      }
+      if (p)
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), p, size1 - 1);
+   }
+
+   pcon->error[size - 1] = '\0';
+
+   return 0;
+}
+
+
+int isc_error(DBXCON *pcon, int error_code)
+{
+   int size, size1;
+
+   size = DBX_ERROR_SIZE;
+   size1 = size - (int) strlen(pcon->error);
+
+   switch (error_code) {
+      case CACHE_CONBROKEN:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<NOCON>", size1 - 1);
+         break;
+      case CACHE_NOCON:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<NOCON>", size1 - 1);
+         break;
+      case CACHE_ERSYSTEM:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<SYSTEM>", size1 - 1);
+         break;
+      case CACHE_ERARGSTACK:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<STACK>", size1 - 1);
+         break;
+      case CACHE_STRTOOLONG:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<MAXSTRING>", size1 - 1);
+         break;
+      case CACHE_ERMXSTR:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<MAXSTRING>", size1 - 1);
+         break;
+      case CACHE_ERSTRINGSTACK:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<STRINGSTACK>", size1 - 1);
+         break;
+      case CACHE_ERPROTECT:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<PROTECT>", size1 - 1);
+         break;
+      case CACHE_ERUNDEF:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<UNDEFINED>", size1 - 1);
+         break;
+      case CACHE_ERUNIMPLEMENTED:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<UNIMPLEMENTED>", size1 - 1);
+         break;
+      case CACHE_ERSUBSCR:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<SUBSCRIPT>", size1 - 1);
+         break;
+      case CACHE_ERNOROUTINE:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<NOROUTINE>", size1 - 1);
+         break;
+      case CACHE_ERNOLINE:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<NOLINE>", size1 - 1);
+         break;
+      case CACHE_ERPARAMETER:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<PARAMETER>", size1 - 1);
+         break;
+      case CACHE_BAD_GLOBAL:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<SYNTAX>", size1 - 1);
+         break;
+      case CACHE_BAD_NAMESPACE:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<NAMESPACE>", size1 - 1);
+         break;
+      case CACHE_BAD_FUNCTION:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<FUNCTION>", size1 - 1);
+         break;
+      case CACHE_ERNOCLASS:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<CLASS DOES NOT EXIST>", size1 - 1);
+         break;
+      case CACHE_ERBADOREF:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<INVALID OREF>", size1 - 1);
+         break;
+      case CACHE_ERNOMETHOD:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<METHOD DOES NOT EXIST>", size1 - 1);
+         break;
+      case CACHE_ERNOPROPERTY:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<PROPERTY DOES NOT EXIST>", size1 - 1);
+         break;
+      case CACHE_ETIMEOUT:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<TIMEOUT>", size1 - 1);
+         break;
+      case CACHE_BAD_STRING:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<SYNTAX>", size1 - 1);
+         break;
+      case CACHE_ERNAMSP:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<NAMESPACE>", size1 - 1);
+         break;
+      case CACHE_ACCESSDENIED:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<ACCESS DENIED>", size1 - 1);
+         break;
+      default:
+         T_STRNCAT(pcon->error, _dbxso(pcon->error), "<SYNTAX>", size1 - 1);
+         break;
+   }
+
+   return 1;
+}
+
+
+int ydb_load_library(DBXCON *pcon)
+{
+   int n, len, result;
+   char primlib[DBX_ERROR_SIZE], primerr[DBX_ERROR_SIZE];
+   char verfile[256], fun[64];
+   char *libnam[16];
+
+   strcpy(pcon->p_ydb_so->libdir, pcon->path);
+   strcpy(pcon->p_ydb_so->funprfx, "ydb");
+   strcpy(pcon->p_ydb_so->dbname, "YottaDB");
+
+   strcpy(verfile, pcon->path);
+   len = (int) strlen(pcon->p_ydb_so->libdir);
+   if (pcon->p_ydb_so->libdir[len - 1] != '/' && pcon->p_ydb_so->libdir[len - 1] != '\\') {
+      pcon->p_ydb_so->libdir[len] = '/';
+      len ++;
+   }
+
+   n = 0;
+#if defined(_WIN32)
+   libnam[n ++] = (char *) DBX_YDB_DLL;
+#else
+#if defined(MACOSX)
+   libnam[n ++] = (char *) DBX_YDB_DYLIB;
+   libnam[n ++] = (char *) DBX_YDB_SO;
+#else
+   libnam[n ++] = (char *) DBX_YDB_SO;
+   libnam[n ++] = (char *) DBX_YDB_DYLIB;
+#endif
+#endif
+
+   libnam[n ++] = NULL;
+   strcpy(pcon->p_ydb_so->libnam, pcon->p_ydb_so->libdir);
+   len = (int) strlen(pcon->p_ydb_so->libnam);
+
+   for (n = 0; libnam[n]; n ++) {
+      strcpy(pcon->p_ydb_so->libnam + len, libnam[n]);
+      if (!n) {
+         strcpy(primlib, pcon->p_ydb_so->libnam);
+      }
+
+      pcon->p_ydb_so->p_library = dbx_dso_load(pcon->p_ydb_so->libnam);
+      if (pcon->p_debug->debug == 1) {
+         fprintf(pcon->p_debug->p_fdebug, "\r\n       >>> %p==dbx_dso_load(%s)", pcon->p_ydb_so->p_library, pcon->p_ydb_so->libnam);
+         fflush(pcon->p_debug->p_fdebug);
+      }
+      if (pcon->p_ydb_so->p_library) {
+         break;
+      }
+
+      if (!n) {
+         int len1, len2;
+         char *p;
+#if defined(_WIN32)
+         DWORD errorcode;
+         LPVOID lpMsgBuf;
+
+         lpMsgBuf = NULL;
+         errorcode = GetLastError();
+         sprintf(pcon->error, "Error loading %s Library: %s; Error Code : %ld",  pcon->p_ydb_so->dbname, primlib, errorcode);
+         len2 = (int) strlen(pcon->error);
+         len1 = FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                        NULL,
+                        errorcode,
+                        /* MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), */
+                        MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US),
+                        (LPTSTR) &lpMsgBuf,
+                        0,
+                        NULL 
+                        );
+         if (lpMsgBuf && len1 > 0 && (DBX_ERROR_SIZE - len2) > 30) {
+            strncpy(primerr, (const char *) lpMsgBuf, DBX_ERROR_SIZE - 1);
+            p = strstr(primerr, "\r\n");
+            if (p)
+               *p = '\0';
+            len1 = (DBX_ERROR_SIZE - (len2 + 10));
+            if (len1 < 1)
+               len1 = 0;
+            primerr[len1] = '\0';
+            p = strstr(primerr, "%1");
+            if (p) {
+               *p = 'I';
+               *(p + 1) = 't';
+            }
+            strcat(pcon->error, " (");
+            strcat(pcon->error, primerr);
+            strcat(pcon->error, ")");
+         }
+         if (lpMsgBuf)
+            LocalFree(lpMsgBuf);
+#else
+         p = (char *) dlerror();
+         sprintf(primerr, "Cannot load %s library: Error Code: %d", pcon->p_ydb_so->dbname, errno);
+         len2 = strlen(pcon->error);
+         if (p) {
+            strncpy(primerr, p, DBX_ERROR_SIZE - 1);
+            primerr[DBX_ERROR_SIZE - 1] = '\0';
+            len1 = (DBX_ERROR_SIZE - (len2 + 10));
+            if (len1 < 1)
+               len1 = 0;
+            primerr[len1] = '\0';
+            strcat(pcon->error, " (");
+            strcat(pcon->error, primerr);
+            strcat(pcon->error, ")");
+         }
+#endif
+      }
+   }
+
+   if (!pcon->p_ydb_so->p_library) {
+      goto ydb_load_library_exit;
+   }
+
+   sprintf(fun, "%s_init", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_init = (int (*) (void)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+   if (!pcon->p_ydb_so->p_ydb_init) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_ydb_so->dbname, pcon->p_ydb_so->libnam, fun);
+      goto ydb_load_library_exit;
+   }
+   sprintf(fun, "%s_exit", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_exit = (int (*) (void)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+   if (!pcon->p_ydb_so->p_ydb_exit) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_ydb_so->dbname, pcon->p_ydb_so->libnam, fun);
+      goto ydb_load_library_exit;
+   }
+   sprintf(fun, "%s_malloc", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_malloc = (int (*) (size_t)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+   if (!pcon->p_ydb_so->p_ydb_malloc) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_ydb_so->dbname, pcon->p_ydb_so->libnam, fun);
+      goto ydb_load_library_exit;
+   }
+   sprintf(fun, "%s_free", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_free = (int (*) (void *)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+   if (!pcon->p_ydb_so->p_ydb_free) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_ydb_so->dbname, pcon->p_ydb_so->libnam, fun);
+      goto ydb_load_library_exit;
+   }
+   sprintf(fun, "%s_data_s", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_data_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, unsigned int *)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+   if (!pcon->p_ydb_so->p_ydb_data_s) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_ydb_so->dbname, pcon->p_ydb_so->libnam, fun);
+      goto ydb_load_library_exit;
+   }
+   sprintf(fun, "%s_delete_s", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_delete_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, int)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+   if (!pcon->p_ydb_so->p_ydb_delete_s) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_ydb_so->dbname, pcon->p_ydb_so->libnam, fun);
+      goto ydb_load_library_exit;
+   }
+   sprintf(fun, "%s_set_s", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_set_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+   if (!pcon->p_ydb_so->p_ydb_set_s) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_ydb_so->dbname, pcon->p_ydb_so->libnam, fun);
+      goto ydb_load_library_exit;
+   }
+   sprintf(fun, "%s_get_s", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_get_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+   if (!pcon->p_ydb_so->p_ydb_get_s) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_ydb_so->dbname, pcon->p_ydb_so->libnam, fun);
+      goto ydb_load_library_exit;
+   }
+   sprintf(fun, "%s_subscript_next_s", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_subscript_next_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+   if (!pcon->p_ydb_so->p_ydb_subscript_next_s) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_ydb_so->dbname, pcon->p_ydb_so->libnam, fun);
+      goto ydb_load_library_exit;
+   }
+   sprintf(fun, "%s_subscript_previous_s", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_subscript_previous_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+   if (!pcon->p_ydb_so->p_ydb_subscript_previous_s) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_ydb_so->dbname, pcon->p_ydb_so->libnam, fun);
+      goto ydb_load_library_exit;
+   }
+   sprintf(fun, "%s_node_next_s", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_node_next_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, int *, ydb_buffer_t *)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+   if (!pcon->p_ydb_so->p_ydb_node_next_s) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_ydb_so->dbname, pcon->p_ydb_so->libnam, fun);
+      goto ydb_load_library_exit;
+   }
+   sprintf(fun, "%s_node_previous_s", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_node_previous_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, int *, ydb_buffer_t *)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+   if (!pcon->p_ydb_so->p_ydb_node_previous_s) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_ydb_so->dbname, pcon->p_ydb_so->libnam, fun);
+      goto ydb_load_library_exit;
+   }
+   sprintf(fun, "%s_incr_s", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_incr_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *, ydb_buffer_t *)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+   if (!pcon->p_ydb_so->p_ydb_incr_s) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_ydb_so->dbname, pcon->p_ydb_so->libnam, fun);
+      goto ydb_load_library_exit;
+   }
+   sprintf(fun, "%s_ci", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_ci = (int (*) (const char *, ...)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+   if (!pcon->p_ydb_so->p_ydb_ci) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_ydb_so->dbname, pcon->p_ydb_so->libnam, fun);
+      goto ydb_load_library_exit;
+   }
+   sprintf(fun, "%s_cip", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_cip = (int (*) (ci_name_descriptor *, ...)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+   if (!pcon->p_ydb_so->p_ydb_cip) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_ydb_so->dbname, pcon->p_ydb_so->libnam, fun);
+      goto ydb_load_library_exit;
+   }
+
+   pcon->p_ydb_so->loaded = 1;
+
+ydb_load_library_exit:
+
+   if (pcon->error[0]) {
+      pcon->p_ydb_so->loaded = 0;
+      pcon->error_code = 1009;
+      strcpy((char *) pcon->output_val.svalue.buf_addr, "0");
+      result = CACHE_NOCON;
+
+      return result;
+   }
+
+   return CACHE_SUCCESS;
+}
+
+
+int ydb_open(DBXCON *pcon)
+{
+   int rc, error_code, result;
+   char buffer[256], buffer1[256];
+   ydb_buffer_t zv, data;
+
+   error_code = 0;
+
+   if (!pcon->p_ydb_so) {
+      pcon->p_ydb_so = (DBXYDBSO *) dbx_malloc(sizeof(DBXYDBSO), 0);
+      if (!pcon->p_ydb_so) {
+         T_STRCPY(pcon->error, _dbxso(pcon->error), "No Memory");
+         pcon->error_code = 1009; 
+         result = CACHE_NOCON;
+         return result;
+      }
+      memset((void *) pcon->p_ydb_so, 0, sizeof(DBXYDBSO));
+      pcon->p_ydb_so->loaded = 0;
+   }
+
+   if (pcon->p_ydb_so->loaded == 2) {
+      strcpy(pcon->error, "Cannot create multiple connections to the database");
+      pcon->error_code = 1009; 
+      strncpy(pcon->error, pcon->error, DBX_ERROR_SIZE - 1);
+      pcon->error[DBX_ERROR_SIZE - 1] = '\0';
+      strcpy((char *) pcon->output_val.svalue.buf_addr, "0");
+      rc = CACHE_NOCON;
+      goto ydb_open_exit;
+   }
+
+   if (!pcon->p_ydb_so->loaded) {
+      rc = ydb_load_library(pcon);
+      if (rc != CACHE_SUCCESS) {
+         goto ydb_open_exit;
+      }
+   }
+
+   rc = pcon->p_ydb_so->p_ydb_init();
+
+/*
+   YDB_COPY_STRING_TO_BUFFER("$zstatus", pglobal, rc);
+   rc = pcon->p_ydb_so->p_ydb_get_s(pglobal, 0, NULL, pdata);
+   if (pdata->len_used >= 0) {
+      pdata->buf_addr[pdata->len_used] = '\0';
+   }
+   printf("\r\np_ydb_get_s($zstatus)=%d; len_used=%d; s=%s\r\n", rc, pdata->len_used, pdata->buf_addr);
+*/
+
+   strcpy(buffer, "$zv");
+   zv.buf_addr = buffer;
+   zv.len_used = (int) strlen(buffer);
+   zv.len_alloc = 255;
+
+   data.buf_addr = buffer1;
+   data.len_used = 0;
+   data.len_alloc = 255;
+
+   rc = pcon->p_ydb_so->p_ydb_get_s(&zv, 0, NULL, &data);
+
+   if (data.len_used >= 0) {
+      data.buf_addr[data.len_used] = '\0';
+   }
+
+   if (pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n");
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      ydb_parse_zv(data.buf_addr, pcon->p_zv);
+      sprintf(pcon->p_zv->version, "%d.%d.b%d", pcon->p_zv->majorversion, pcon->p_zv->minorversion, pcon->p_zv->dbx_build);
+   }
+
+ydb_open_exit:
+
+   if (rc == CACHE_SUCCESS) {
+      dbx_create_string(&(pcon->output_val.svalue), (void *) &rc, DBX_TYPE_INT);
+   }
+   else {
+      dbx_create_string(&(pcon->output_val.svalue), (void *) pcon->error, DBX_TYPE_STR8);
+   }
+
+   return rc;
+}
+
+
+int ydb_parse_zv(char *zv, DBXZV * p_ydb_sv)
+{
+   int result;
+   double dbx_version;
+   char *p, *p1, *p2;
+
+   p_ydb_sv->dbx_version = 0;
+   p_ydb_sv->majorversion = 0;
+   p_ydb_sv->minorversion = 0;
+   p_ydb_sv->dbx_build = 0;
+   p_ydb_sv->vnumber = 0;
+
+   result = 0;
+   /* GT.M V6.3-004 Linux x86_64 */
+
+   p_ydb_sv->dbtype = DBX_DBTYPE_YOTTADB;
+
+   p = zv;
+   dbx_version = 0;
+   while (*(++ p)) {
+      if (*(p - 1) == 'V' && isdigit((int) (*p))) {
+         dbx_version = strtod(p, NULL);
+         break;
+      }
+   }
+
+   if (dbx_version > 0) {
+      p_ydb_sv->dbx_version = dbx_version;
+      p_ydb_sv->majorversion = (int) strtol(p, NULL, 10);
+      p1 = strstr(p, ".");
+      if (p1) {
+         p_ydb_sv->minorversion = (int) strtol(p1 + 1, NULL, 10);
+      }
+      p2 = strstr(p, "-");
+      if (p2) {
+         p_ydb_sv->dbx_build = (int) strtol(p2 + 1, NULL, 10);
+      }
+
+      p_ydb_sv->vnumber = ((p_ydb_sv->majorversion * 100000) + (p_ydb_sv->minorversion * 10000) + p_ydb_sv->dbx_build);
+
+      result = 1;
+   }
+
+   return result;
+}
+
+
+int ydb_error_message(DBXCON *pcon, int error_code)
+{
+   int rc;
+   char buffer[256], buffer1[256];
+   ydb_buffer_t zstatus, data;
+
+/*
+   strcpy(buffer, "$zg");
+   zstatus.buf_addr = buffer;
+   zstatus.len_used = (int) strlen(buffer);
+   zstatus.len_alloc = 255;
+
+   data.buf_addr = buffer1;
+   data.len_used = 0;
+   data.len_alloc = 255;
+
+   rc = pcon->p_ydb_so->p_ydb_get_s(&zstatus, 0, NULL, &data);
+*/
+
+   strcpy(buffer, "$zstatus");
+   zstatus.buf_addr = buffer;
+   zstatus.len_used = (int) strlen(buffer);
+   zstatus.len_alloc = 255;
+
+   data.buf_addr = buffer1;
+   data.len_used = 0;
+   data.len_alloc = 255;
+
+   rc = pcon->p_ydb_so->p_ydb_get_s(&zstatus, 0, NULL, &data);
+
+   if (data.len_used >= 0) {
+      data.buf_addr[data.len_used] = '\0';
+   }
+
+   return rc;
+}
+
+
+int ydb_function(DBXCON *pcon, DBXFUN *pfun)
+{
+   int rc;
+
+   pcon->output_val.svalue.len_used = 0;
+   pcon->output_val.svalue.buf_addr[0] = '\0';
+
+   switch (pcon->argc) {
+      case 1:
+         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, pcon->output_val.svalue.buf_addr);
+         break;
+      case 2:
+         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, pcon->output_val.svalue.buf_addr, pcon->args[1].svalue.buf_addr);
+         break;
+      case 3:
+         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, pcon->output_val.svalue.buf_addr, pcon->args[1].svalue.buf_addr, pcon->args[2].svalue.buf_addr);
+         break;
+      case 4:
+         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, pcon->output_val.svalue.buf_addr, pcon->args[1].svalue.buf_addr, pcon->args[2].svalue.buf_addr, pcon->args[3].svalue.buf_addr);
+         break;
+      default:
+         rc = CACHE_SUCCESS;
+         break;
+   }
+
+   pcon->output_val.svalue.len_used = (int) strlen(pcon->output_val.svalue.buf_addr);
+
+   return rc;
+}
+
+
+int dbx_version(DBXCON *pcon)
+{
+   char buffer[256];
+
+   T_SPRINTF((char *) buffer, _dbxso(buffer), "mg-dbx: version: %s; ABI: %d", DBX_VERSION, NODE_MODULE_VERSION);
+
+   if (pcon->p_zv->version[0]) {
+      if (pcon->p_zv->dbtype == DBX_DBTYPE_CACHE)
+         T_STRCAT((char *) buffer, _dbxso(buffer), "; Cache version: ");
+      else if (pcon->p_zv->dbtype == DBX_DBTYPE_IRIS)
+         T_STRCAT((char *) buffer, _dbxso(buffer), "; IRIS version: ");
+      else if (pcon->p_zv->dbtype == DBX_DBTYPE_YOTTADB)
+         T_STRCAT((char *) buffer, _dbxso(buffer), "; YottaDB version: ");
+      T_STRCAT((char *) buffer, _dbxso(buffer), pcon->p_zv->version);
+   }
+
+   dbx_create_string(&(pcon->output_val.svalue), (void *) buffer, DBX_TYPE_STR8);
+
+   return 0;
+}
+
+
+int dbx_open(DBXCON *pcon)
+{
+   int rc;
+
+   if (pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n   >>> dbx_open");
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   if (!pcon->dbtype) {
+      strcpy(pcon->error, "Unable to determine the database type");
+      rc = CACHE_NOCON;
+      goto dbx_open_exit;
+   }
+
+   if (!pcon->path[0]) {
+      strcpy(pcon->error, "Unable to determine the path to the database installation");
+      rc = CACHE_NOCON;
+      goto dbx_open_exit;
+   }
+
+   if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
+      rc = isc_open(pcon);
+   }
+   else {
+      rc = ydb_open(pcon);
+   }
+
+   dbx_pool_thread_init(pcon, 1);
+
+dbx_open_exit:
+
+   return rc;
+}
+
+
+int dbx_do_nothing(DBXCON *pcon)
+{
+   /* Function called asynchronously */
+
+   return 0;
+}
+
+
+int dbx_close(DBXCON *pcon)
+{
+   int rc, rc1;
+
+   if (pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n   >>> dbx_close");
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   rc1 = 0;
+
+  if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      if (pcon->p_ydb_so) {
+         if (pcon->p_ydb_so->loaded) {
+            rc = pcon->p_ydb_so->p_ydb_exit();
+            printf("\r\np_ydb_exit=%d\r\n", rc);
+            //dbx_dso_unload(pcon->p_ydb_so->p_library); 
+
+            pcon->p_ydb_so->p_library = NULL;
+            pcon->p_ydb_so->loaded = 0;
+         }
+
+         strcpy(pcon->error, "");
+         dbx_create_string(&(pcon->output_val.svalue), (void *) "1", DBX_TYPE_STR);
+
+         strcpy(pcon->p_ydb_so->libdir, "");
+         strcpy(pcon->p_ydb_so->libnam, "");
+      }
+   }
+   else {
+      if (pcon->p_isc_so) {
+         if (pcon->p_isc_so->loaded) {
+
+            ///DBX_DB_LOCK(rc, 0);
+
+            rc = pcon->p_isc_so->p_CacheEnd();
+            rc1 = rc;
+
+            ///DBX_DB_UNLOCK(rc);
+
+            if (pcon->p_debug->debug == 1) {
+               fprintf(pcon->p_debug->p_fdebug, "\r\n       >>> %d==%sEnd()", rc1, pcon->p_isc_so->funprfx);
+               fflush(pcon->p_debug->p_fdebug);
+            }
+
+            dbx_dso_unload(pcon->p_isc_so->p_library);
+            pcon->p_isc_so->p_library = NULL;
+            pcon->p_isc_so->loaded = 0;
+         }
+
+         T_STRCPY(pcon->error, _dbxso(pcon->error), "");
+         dbx_create_string(&(pcon->output_val.svalue), (void *) "1", DBX_TYPE_STR8);
+
+         T_STRCPY(pcon->p_isc_so->libdir, _dbxso(pcon->p_isc_so->libdir), "");
+         T_STRCPY(pcon->p_isc_so->libnam, _dbxso(pcon->p_isc_so->libnam), "");
+      }
+   }
+
+   T_STRCPY(pcon->p_zv->version, _dbxso(pcon->p_zv->version), "");
+
+   T_STRCPY(pcon->path, _dbxso(pcon->path), "");
+   T_STRCPY(pcon->username, _dbxso(pcon->username), "");
+   T_STRCPY(pcon->password, _dbxso(pcon->password), "");
+   T_STRCPY(pcon->nspace, _dbxso(pcon->nspace), "");
+   T_STRCPY(pcon->input_device, _dbxso(pcon->input_device), "");
+   T_STRCPY(pcon->output_device, _dbxso(pcon->output_device), "");
+
+   ////rc = dbx_mutex_destroy(pcon->p_mutex);
+
+   if (pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n");
+      fflush(pcon->p_debug->p_fdebug);
+      if (pcon->p_debug->p_fdebug != stdout) {
+         fclose(pcon->p_debug->p_fdebug);
+         pcon->p_debug->p_fdebug = stdout;
+      }
+      pcon->p_debug->debug = 0;
+   }
+
+   return 0;
+}
+
+
+int dbx_global_reference(DBXCON *pcon)
+{
+   int n, rc;
+   unsigned int ne;
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = CACHE_SUCCESS;
+      return rc;
+   }
+
+   for (n = 0; n < pcon->argc; n ++) {
+
+      if (n == 0) {
+         if (pcon->args[n].svalue.buf_addr[0] == '^')
+            rc = pcon->p_isc_so->p_CachePushGlobal((int) pcon->args[n].svalue.len_used - 1, (Callin_char_t *) pcon->args[n].svalue.buf_addr + 1);
+         else
+            rc = pcon->p_isc_so->p_CachePushGlobal((int) pcon->args[n].svalue.len_used, (Callin_char_t *) pcon->args[n].svalue.buf_addr);
+         continue;
+      }
+      if (pcon->args[n].type == DBX_TYPE_INT) {
+         rc = pcon->p_isc_so->p_CachePushInt((int) pcon->args[n].num.int32);
+      }
+      else if (pcon->args[n].type == DBX_TYPE_DOUBLE) {
+         rc = pcon->p_isc_so->p_CachePushIEEEDbl(pcon->args[n].num.real);
+      }
+      else {
+         if (pcon->args[n].svalue.len_used < CACHE_MAXSTRLEN) {
+            rc = rc = pcon->p_isc_so->p_CachePushStr(pcon->args[n].svalue.len_used, (Callin_char_t *) pcon->args[n].svalue.buf_addr);
+         }
+         else {
+            pcon->args[n].cvalue.pstr = (void *) pcon->p_isc_so->p_CacheExStrNew((CACHE_EXSTRP) &(pcon->args[n].cvalue.zstr), pcon->args[n].svalue.len_used + 1);
+            for (ne = 0; ne < pcon->args[n].svalue.len_used; ne ++) {
+               pcon->args[n].cvalue.zstr.str.ch[ne] = (char) pcon->args[n].svalue.buf_addr[ne];
+            }
+            pcon->args[n].cvalue.zstr.str.ch[ne] = (char) 0;
+            pcon->args[n].cvalue.zstr.len = pcon->args[n].svalue.len_used;
+
+            rc = rc = pcon->p_isc_so->p_CachePushExStr((CACHE_EXSTRP) &(pcon->args[n].cvalue.zstr));
+         }
+      }
+   }
+   return rc;
+}
+
+
+int dbx_get(DBXCON *pcon)
+{
+   int rc;
+
+   if (pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n   >>> dbx_get");
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   DBX_DB_LOCK(rc, 0);
+
+   rc = dbx_global_reference(pcon);
+
+   if (rc != CACHE_SUCCESS) {
+      dbx_error_message(pcon, rc);
+      goto dbx_get_exit;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = pcon->p_ydb_so->p_ydb_get_s(&(pcon->args[0].svalue), pcon->argc - 2, &pcon->yargs[0], &(pcon->output_val.svalue));
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheGlobalGet(pcon->argc - 1, 0); /* 1 for no 'undefined' */
+   }
+
+   if (rc == CACHE_ERUNDEF) {
+      dbx_create_string(&(pcon->output_val.svalue), (void *) "", DBX_TYPE_STR8);
+   }
+   else if (rc == CACHE_SUCCESS) {
+      isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+dbx_get_exit:
+
+   DBX_DB_UNLOCK(rc);
+
+   isc_cleanup(pcon);
+
+   return 0;
+}
+
+
+int dbx_set(DBXCON *pcon)
+{
+   int rc;
+
+   if (pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n   >>> dbx_set");
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   DBX_DB_LOCK(rc, 0);
+
+   rc = dbx_global_reference(pcon);
+   if (rc != CACHE_SUCCESS) {
+      dbx_error_message(pcon, rc);
+      goto dbx_set_exit;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = pcon->p_ydb_so->p_ydb_set_s(&(pcon->args[0].svalue), pcon->argc - 2, &pcon->yargs[0], &(pcon->args[pcon->argc - 1].svalue));
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheGlobalSet(pcon->argc - 2);
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+dbx_set_exit:
+
+   DBX_DB_UNLOCK(rc);
+
+   isc_cleanup(pcon);
+
+   return 0;
+}
+
+
+int dbx_defined(DBXCON *pcon)
+{
+   int rc, n;
+
+   if (pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n   >>> dbx_defined");
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   DBX_DB_LOCK(rc, 0);
+
+   rc = dbx_global_reference(pcon);
+   if (rc != CACHE_SUCCESS) {
+      dbx_error_message(pcon, rc);
+      goto dbx_defined_exit;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = pcon->p_ydb_so->p_ydb_data_s(&(pcon->args[0].svalue), pcon->argc - 1, &pcon->yargs[0], (unsigned int *) &n);
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheGlobalData(pcon->argc - 1, 0);
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      if (pcon->p_zv->dbtype != DBX_DBTYPE_YOTTADB) {
+         pcon->p_isc_so->p_CachePopInt(&n);
+      }
+      dbx_create_string(&(pcon->output_val.svalue), (void *) &n, DBX_TYPE_INT);
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+dbx_defined_exit:
+
+   DBX_DB_UNLOCK(rc);
+
+   isc_cleanup(pcon);
+
+   return 0;
+}
+
+
+
+int dbx_delete(DBXCON *pcon)
+{
+   int rc, n;
+
+   if (pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n   >>> dbx_delete");
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   DBX_DB_LOCK(rc, 0);
+
+   rc = dbx_global_reference(pcon);
+   if (rc != CACHE_SUCCESS) {
+      dbx_error_message(pcon, rc);
+      goto dbx_delete_exit;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = pcon->p_ydb_so->p_ydb_delete_s(&(pcon->args[0].svalue), pcon->argc - 1, &pcon->yargs[0], YDB_DEL_TREE);
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheGlobalKill(pcon->argc - 1, 0);
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      if (pcon->p_zv->dbtype != DBX_DBTYPE_YOTTADB) {
+         pcon->p_isc_so->p_CachePopInt(&n);
+      }
+      n = 0;
+      dbx_create_string(&(pcon->output_val.svalue), (void *) &n, DBX_TYPE_INT);
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+dbx_delete_exit:
+
+   DBX_DB_UNLOCK(rc);
+
+   isc_cleanup(pcon);
+
+   return 0;
+}
+
+
+int dbx_next(DBXCON *pcon)
+{
+   int rc;
+
+   if (pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n   >>> dbx_next");
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   DBX_DB_LOCK(rc, 0);
+
+   rc = dbx_global_reference(pcon);
+   if (rc != CACHE_SUCCESS) {
+      dbx_error_message(pcon, rc);
+      goto dbx_next_exit;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = pcon->p_ydb_so->p_ydb_subscript_next_s(&(pcon->args[0].svalue), pcon->argc - 1, &pcon->yargs[0], &(pcon->output_val.svalue));
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheGlobalOrder(pcon->argc - 1, 1, 0);
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
+         isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+      }
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+dbx_next_exit:
+
+   DBX_DB_UNLOCK(rc);
+
+   isc_cleanup(pcon);
+
+   return 0;
+}
+
+
+int dbx_previous(DBXCON *pcon)
+{
+   int rc;
+
+   if (pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n   >>> dbx_previous");
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   DBX_DB_LOCK(rc, 0);
+
+   rc = dbx_global_reference(pcon);
+   if (rc != CACHE_SUCCESS) {
+      dbx_error_message(pcon, rc);
+      goto dbx_previous_exit;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = pcon->p_ydb_so->p_ydb_subscript_previous_s(&(pcon->args[0].svalue), pcon->argc - 1, &pcon->yargs[0], &(pcon->output_val.svalue));
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheGlobalOrder(pcon->argc - 1, -1, 0);
+
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
+         isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+      }
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+dbx_previous_exit:
+
+   DBX_DB_UNLOCK(rc);
+
+   isc_cleanup(pcon);
+
+   return 0;
+}
+
+
+int dbx_function_reference(DBXCON *pcon, DBXFUN *pfun)
+{
+   int n, rc;
+   unsigned int ne;
+
+   rc = CACHE_SUCCESS;
+
+   for (n = 0; n < pcon->argc; n ++) {
+
+      if (n == 0) {
+         T_STRNCPY(pfun->buffer, _dbxso(pfun->buffer), pcon->args[n].svalue.buf_addr, pcon->args[n].svalue.len_used);
+         pfun->buffer[pcon->args[n].svalue.len_used] = '\0';
+         pfun->label = pfun->buffer;
+         pfun->routine = strstr(pfun->buffer, "^");
+         *pfun->routine = '\0';
+         pfun->routine ++;
+         pfun->label_len = (int) strlen(pfun->label);
+         pfun->routine_len = (int) strlen(pfun->routine);
+
+         if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+            break;
+         }
+
+         rc = pcon->p_isc_so->p_CachePushFunc(&(pfun->rflag), (int) pfun->label_len, (const Callin_char_t *) pfun->label, (int) pfun->routine_len, (const Callin_char_t *) pfun->routine);
+      }
+
+      if (pcon->args[n].type == DBX_TYPE_INT) {
+         rc = pcon->p_isc_so->p_CachePushInt((int) pcon->args[n].num.int32);
+      }
+      else if (pcon->args[n].type == DBX_TYPE_DOUBLE) {
+         rc = pcon->p_isc_so->p_CachePushIEEEDbl(pcon->args[n].num.real);
+      }
+      else {
+         if (pcon->args[n].svalue.len_used < CACHE_MAXSTRLEN) {
+            rc = rc = pcon->p_isc_so->p_CachePushStr(pcon->args[n].svalue.len_used, (Callin_char_t *) pcon->args[n].svalue.buf_addr);
+         }
+         else {
+            pcon->args[n].cvalue.pstr = (void *) pcon->p_isc_so->p_CacheExStrNew((CACHE_EXSTRP) &(pcon->args[n].cvalue.zstr), pcon->args[n].svalue.len_used + 1);
+            for (ne = 0; ne < pcon->args[n].svalue.len_used; ne ++) {
+               pcon->args[n].cvalue.zstr.str.ch[ne] = (char) pcon->args[n].svalue.buf_addr[ne];
+            }
+            pcon->args[n].cvalue.zstr.str.ch[ne] = (char) 0;
+            pcon->args[n].cvalue.zstr.len = pcon->args[n].svalue.len_used;
+
+            rc = rc = pcon->p_isc_so->p_CachePushExStr((CACHE_EXSTRP) &(pcon->args[n].cvalue.zstr));
+         }
+      }
+   }
+   return rc;
+}
+
+
+int dbx_function(DBXCON *pcon)
+{
+   int rc;
+   DBXFUN fun;
+
+   if (pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n   >>> dbx_function");
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   DBX_DB_LOCK(rc, 0);
+
+   rc = dbx_function_reference(pcon, &fun);
+
+   if (rc != CACHE_SUCCESS) {
+      dbx_error_message(pcon, rc);
+      goto dbx_get_exit;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = ydb_function(pcon, &fun);
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheExtFun(fun.rflag, pcon->argc - 1);
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
+         isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+      }
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+dbx_get_exit:
+
+   DBX_DB_UNLOCK(rc);
+
+   isc_cleanup(pcon);
+
+   return 0;
+}
+
+
+int cache_report_failure(DBXCON *pcon)
+{
+
+   if (pcon->error_code == 0) {
+      pcon->error_code = 10001;
+      T_STRCPY(pcon->error, _dbxso(pcon->error), DBX_TEXT_E_ASYNC);
+   }
+
+   return 0;
+}
+
+
+/* ASYNC THREAD : Do the Cache task */
+int dbx_launch_thread(DBXCON *pcon)
+{
+#if !defined(_WIN32)
+
+   dbx_pool_submit_task(pcon);
+
+   return 1;
+
+#else
+
+   {
+      int rc = 0;
+#if defined(_WIN32)
+      HANDLE hthread;
+      SIZE_T stack_size;
+      DWORD thread_id, cre_flags, result;
+      LPSECURITY_ATTRIBUTES pattr;
+
+      stack_size = 0;
+      cre_flags = 0;
+      pattr = NULL;
+
+      hthread = CreateThread(pattr, stack_size, (LPTHREAD_START_ROUTINE) dbx_thread_main, (LPVOID) pcon, cre_flags, &thread_id);
+/*
+      printf("\r\n*** %lu Primary Thread : CreateThread (%d) ...", (unsigned long) dbx_current_thread_id(), dbx_queue_size);
+*/
+      if (!hthread) {
+         printf("failed to create thread, errno = %d\n",errno);
+      }
+      else {
+         result = WaitForSingleObject(hthread, INFINITE);
+      }
+#else
+      pthread_attr_t attr;
+      pthread_t child_thread;
+
+      size_t stacksize, newstacksize;
+
+      pthread_attr_init(&attr);
+
+      stacksize = 0;
+      pthread_attr_getstacksize(&attr, &stacksize);
+
+      newstacksize = DBX_THREAD_STACK_SIZE;
+
+      pthread_attr_setstacksize(&attr, newstacksize);
+/*
+      printf("Thread: default stack=%lu; new stack=%lu;\n", (unsigned long) stacksize, (unsigned long) newstacksize);
+*/
+      rc = pthread_create(&child_thread, &attr, dbx_thread_main, (void *) pcon);
+      if (rc) {
+         printf("failed to create thread, errno = %d\n",errno);
+      }
+      else {
+         rc = pthread_join(child_thread,NULL);
+      }
+#endif
+   }
+
+#endif
+
+   return 1;
+}
+
+
+#if defined(_WIN32)
+LPTHREAD_START_ROUTINE dbx_thread_main(LPVOID pargs)
+#else
+void * dbx_thread_main(void *pargs)
+#endif
+{
+   DBXCON *pcon;
+/*
+   printf("\r\n*** %lu Worker Thread : Thread (%d) ...", (unsigned long) dbx_current_thread_id(), dbx_queue_size);
+*/
+   pcon = (DBXCON *) pargs;
+
+   pcon->p_dbxfun(pcon);
+
+#if defined(_WIN32)
+   return 0;
+#else
+   return NULL;
+#endif
+}
+
+
+struct dbx_pool_task* dbx_pool_add_task(DBXCON *pcon)
+{
+   struct dbx_pool_task* enqueue_task;
+
+   enqueue_task = (struct dbx_pool_task*) dbx_malloc(sizeof(struct dbx_pool_task), 601);
+
+   if (!enqueue_task) {
+      dbx_request_errors ++;
+      return NULL;
+   }
+
+   enqueue_task->task_id = 6;
+   enqueue_task->pcon = pcon;
+   enqueue_task->next = NULL;
+
+#if !defined(_WIN32)
+   enqueue_task->parent_tid = pthread_self();
+
+   pthread_mutex_lock(&dbx_task_queue_mutex);
+
+   if (dbx_total_tasks == 0) {
+      tasks = enqueue_task;
+      bottom_task = enqueue_task;
+   }
+   else {
+      bottom_task->next = enqueue_task;
+      bottom_task = enqueue_task;
+   }
+
+   dbx_total_tasks ++;
+
+   pthread_mutex_unlock(&dbx_task_queue_mutex);
+   pthread_cond_signal(&dbx_pool_cond);
+#endif
+
+   return enqueue_task;
+}
+
+
+struct dbx_pool_task * dbx_pool_get_task(void)
+{
+   struct dbx_pool_task* task;
+
+#if !defined(_WIN32)
+   pthread_mutex_lock(&dbx_task_queue_mutex);
+#endif
+
+   if (dbx_total_tasks > 0) {
+      task = tasks;
+      tasks = task->next;
+
+      if (tasks == NULL) {
+         bottom_task = NULL;
+      }
+      dbx_total_tasks --;
+   }
+   else {
+      task = NULL;
+   }
+
+#if !defined(_WIN32)
+   pthread_mutex_unlock(&dbx_task_queue_mutex);
+#endif
+
+   return task;
+}
+
+
+void dbx_pool_execute_task(struct dbx_pool_task *task, int thread_id)
+{
+   if (task) {
+
+      task->pcon->p_dbxfun(task->pcon);
+
+      task->pcon->done = 1;
+
+#if !defined(_WIN32)
+      pthread_cond_broadcast(&dbx_result_cond);
+#endif
+   }
+}
+
+
+void * dbx_pool_requests_loop(void *data)
+{
+   int thread_id;
+   DBXTID *ptid;
+   struct dbx_pool_task *task = NULL;
+
+   ptid = (DBXTID *) data;
+   if (!ptid) {
+      return NULL;
+   }
+
+   thread_id = ptid->thread_id;
+
+/*
+#if !defined(_WIN32)
+{
+   int ret;
+   pthread_attr_t tattr;
+   size_t size;
+   ret = pthread_getattr_np(pthread_self(), &tattr);
+   ret = pthread_attr_getstacksize(&tattr, &size);
+   printf("\r\n*** pthread_attr_getstacksize (pool) %x *** ret=%d; size=%u\r\n", (unsigned long) pthread_self(), ret, size);
+}
+#endif
+*/
+
+#if !defined(_WIN32)
+   pthread_mutex_lock(&dbx_pool_mutex);
+
+   while (1) {
+      if (dbx_total_tasks > 0) {
+         task = dbx_pool_get_task();
+         if (task) {
+            pthread_mutex_unlock(&dbx_pool_mutex);
+            dbx_pool_execute_task(task, thread_id);
+            dbx_free(task, 3001);
+            pthread_mutex_lock(&dbx_pool_mutex);
+         }
+      }
+      else {
+         pthread_cond_wait(&dbx_pool_cond, &dbx_pool_mutex);
+      }
+   }
+#endif
+
+   return NULL;
+}
+
+
+int dbx_pool_thread_init(DBXCON *pcon, int num_threads)
+{
+#if !defined(_WIN32)
+   int iterator;
+   pthread_attr_t attr[DBX_THREADPOOL_MAX];
+   size_t stacksize, newstacksize;
+
+   for (iterator = 0; iterator < num_threads; iterator ++) {
+
+      pthread_attr_init(&attr[iterator]);
+
+      stacksize = 0;
+      pthread_attr_getstacksize(&attr[iterator], &stacksize);
+
+      newstacksize = DBX_THREAD_STACK_SIZE;
+/*
+      printf("Thread Pool: default stack=%lu; new stack=%lu;\n", (unsigned long) stacksize, (unsigned long) newstacksize);
+*/
+      pthread_attr_setstacksize(&attr[iterator], newstacksize);
+
+      dbx_thr_id[iterator].thread_id = iterator;
+      dbx_thr_id[iterator].p_mutex = pcon->p_mutex;
+      dbx_thr_id[iterator].p_zv = pcon->p_zv;
+      
+      pthread_create(&dbx_p_threads[iterator], &attr[iterator], dbx_pool_requests_loop, (void *) &dbx_thr_id[iterator]);
+
+   }
+#endif
+   return 0;
+}
+
+
+int dbx_pool_submit_task(DBXCON *pcon)
+{
+#if !defined(_WIN32)
+   struct timespec   ts;
+   struct timeval    tp;
+
+   pcon->done = 0;
+
+   dbx_pool_add_task(pcon);
+
+   pthread_mutex_lock(&dbx_result_mutex);
+
+   while (!pcon->done) {
+
+      gettimeofday(&tp, NULL);
+      ts.tv_sec  = tp.tv_sec;
+      ts.tv_nsec = tp.tv_usec * 1000;
+      ts.tv_sec += 3;
+
+      pthread_cond_timedwait(&dbx_result_cond, &dbx_result_mutex, &ts);
+   }
+
+   pthread_mutex_unlock(&dbx_result_mutex);
+#endif
+   return 1;
+}
+
+
+void * dbx_realloc(void *p, int curr_size, int new_size, short id)
+{
+   if (new_size >= curr_size) {
+      if (p) {
+         dbx_free((void *) p, 0);
+      }
+      p = (void *) dbx_malloc(new_size, id);
+      if (!p) {
+         return NULL;
+      }
+   }
+   return p;
+}
+
+
+void * dbx_malloc(int size, short id)
+{
+   void *p;
+
+   p = (void *) malloc(size);
+
+   return p;
+}
+
+
+int dbx_free(void *p, short id)
+{
+   /* printf("\ndbx_free: id=%d; p=%p;", id, p); */
+
+   free((void *) p);
+
+   return 0;
+}
+
+
+int dbx_ucase(char *string)
+{
+#ifdef _UNICODE
+
+   CharUpperA(string);
+   return 1;
+
+#else
+
+   int n, chr;
+
+   n = 0;
+   while (string[n] != '\0') {
+      chr = (int) string[n];
+      if (chr >= 97 && chr <= 122)
+         string[n] = (char) (chr - 32);
+      n ++;
+   }
+   return 1;
+
+#endif
+}
+
+
+int dbx_lcase(char *string)
+{
+#ifdef _UNICODE
+
+   CharLowerA(string);
+   return 1;
+
+#else
+
+   int n, chr;
+
+   n = 0;
+   while (string[n] != '\0') {
+      chr = (int) string[n];
+      if (chr >= 65 && chr <= 90)
+         string[n] = (char) (chr + 32);
+      n ++;
+   }
+   return 1;
+
+#endif
+}
+
+
+int dbx_create_string(DBXSTR *pstr, void *data, short type)
+{
+   //unsigned char *pstr8_in;
+   DBXSTR *pstrobj_in;
+
+   if (!data) {
+      return -1;
+   }
+
+   pstr->len_used = 0;
+   //pstr->offset = 0;
+
+   if (type == DBX_TYPE_STROBJ) {
+      pstrobj_in = (DBXSTR *) data;
+
+      type = DBX_TYPE_STR8;
+      data = (void *) pstrobj_in->buf_addr;
+   }
+
+   if (type == DBX_TYPE_STR8) {
+      T_STRCPY((char *) pstr->buf_addr, pstr->len_alloc, (char *) data);
+   }
+   else if (type == DBX_TYPE_INT) {
+      T_SPRINTF((char *) pstr->buf_addr, pstr->len_alloc, "%d", (int) *((int *) data));
+   }
+   else {
+      pstr->buf_addr[0] = '\0';
+   }
+   pstr->len_used = (unsigned long) strlen((char *) pstr->buf_addr);
+
+   return (int) pstr->len_used;
+}
+
+
+int dbx_buffer_dump(DBXCON *pcon, void *buffer, unsigned int len, char *title, unsigned char csize, short mode)
+{
+   unsigned int n;
+   unsigned char *p8;
+   unsigned short *p16;
+   unsigned short c;
+
+   p8 = NULL;
+   p16 = NULL;
+
+   if (csize == 16) {
+      p16 = (unsigned short *) buffer;
+   }
+   else {
+      p8 = (unsigned char *) buffer;
+   }
+
+   if (pcon && pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "%s (size=%d; charsize=%u)\r\n", title, len, csize);
+      fflush(pcon->p_debug->p_fdebug);
+   }
+   else {
+      printf("\nbuffer dump (title=%s; size=%d; charsize=%u; mode=%d)...\n", title, len, csize, mode);
+   }
+
+   for (n = 0; n < len; n ++) {
+      if (csize == 16) {
+         c = p16[n];
+      }
+      else {
+         c = p8[n];
+      }
+
+      if (mode == 1) {
+         if (pcon && pcon->p_debug->debug == 1)
+            fprintf(pcon->p_debug->p_fdebug, "\\x%04x ", c);
+         else
+            printf("\\x%04x ", c);
+
+         if (!((n + 1) % 8)) {
+            if (pcon && pcon->p_debug->debug == 1)
+               fprintf(pcon->p_debug->p_fdebug, "\r\n");
+            else
+               printf("\r\n");
+         }
+      }
+      else {
+         if ((c < 32) || (c > 126)) {
+            if (csize == 16) {
+               if (pcon && pcon->p_debug->debug == 1)
+                  fprintf(pcon->p_debug->p_fdebug, "\\x%04x", c);
+               else
+                  printf("\\x%04x", c);
+            }
+            else {
+               if (pcon && pcon->p_debug->debug == 1)
+                  fprintf(pcon->p_debug->p_fdebug, "\\x%02x", c);
+               else
+                  printf("\\x%02x", c);
+            }
+         }
+         else {
+            if (pcon && pcon->p_debug->debug == 1)
+               fprintf(pcon->p_debug->p_fdebug, "%c", (char) c);
+            else
+               printf("%c", (char) c);
+         }
+      }
+   }
+
+   if (pcon && pcon->p_debug->debug == 1) {
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   return 0;
+}
+
+
+int dbx_log_event(DBXDEBUG *p_debug, char *message, char *title, int level)
+{
+   if (p_debug && p_debug->debug == 1) {
+      fprintf(p_debug->p_fdebug, "\r\n   >>> event: %s", title);
+      fprintf(p_debug->p_fdebug, "\r\n       >>> %s", message);
+      fflush(p_debug->p_fdebug);
+   }
+   return 1;
+}
+
+
+int dbx_pause(int msecs)
+{
+#if defined(_WIN32)
+
+   Sleep((DWORD) msecs);
+
+#else
+
+#if 1
+   unsigned int secs, msecs_rem;
+
+   secs = (unsigned int) (msecs / 1000);
+   msecs_rem = (unsigned int) (msecs % 1000);
+
+   /* printf("\n   ===> msecs=%ld; secs=%ld; msecs_rem=%ld", msecs, secs, msecs_rem); */
+
+   if (secs > 0) {
+      sleep(secs);
+   }
+   if (msecs_rem > 0) {
+      usleep((useconds_t) (msecs_rem * 1000));
+   }
+
+#else
+   unsigned int secs;
+
+   secs = (unsigned int) (msecs / 1000);
+   if (secs == 0)
+      secs = 1;
+   sleep(secs);
+
+#endif
+
+#endif
+
+   return 0;
+}
+
+
+int dbx_test_file_access(char *file, int mode)
+{
+   int result;
+   char *p;
+   char buffer[256];
+   FILE *fp;
+
+   result = 0;
+   *buffer = '\0';
+   dbx_fopen(&fp, file, "r");
+   if (fp) {
+      p = fgets(buffer, 250, fp);
+      if (p && strlen(buffer)) {
+/*
+         dbx_log_event(NULL, buffer, (char *) "dbx_test_file_access", 0);
+*/
+         result = 1;
+      }
+      fclose(fp);
+   }
+
+   return result;
+
+
+}
+
+
+DBXPLIB dbx_dso_load(char * library)
+{
+   DBXPLIB p_library;
+
+#if defined(_WIN32)
+   p_library = LoadLibraryA(library);
+#else
+   p_library = dlopen(library, RTLD_NOW);
+#endif
+
+   return p_library;
+}
+
+
+
+DBXPROC dbx_dso_sym(DBXPLIB p_library, char * symbol)
+{
+   DBXPROC p_proc;
+
+#if defined(_WIN32)
+   p_proc = GetProcAddress(p_library, symbol);
+#else
+   p_proc  = (void *) dlsym(p_library, symbol);
+#endif
+
+   return p_proc;
+}
+
+
+
+int dbx_dso_unload(DBXPLIB p_library)
+{
+
+#if defined(_WIN32)
+   FreeLibrary(p_library);
+#else
+   dlclose(p_library); 
+#endif
+
+   return 1;
+}
+
+
+DBXTHID dbx_current_thread_id(void)
+{
+#if defined(_WIN32)
+   return (DBXTHID) GetCurrentThreadId();
+#else
+   return (DBXTHID) pthread_self();
+#endif
+}
+
+
+unsigned long dbx_current_process_id(void)
+{
+#if defined(_WIN32)
+   return (unsigned long) GetCurrentProcessId();
+#else
+   return ((unsigned long) getpid());
+#endif
+}
+
+
+int dbx_error_message(DBXCON *pcon, int error_code)
+{
+   int rc;
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = ydb_error_message(pcon, error_code);
+   }
+   else {
+      rc = isc_error_message(pcon, error_code);
+   }
+
+   return rc;
+}
+
+
+int dbx_mutex_create(DBXMUTEX *p_mutex)
+{
+   int result;
+
+   result = 0;
+   if (p_mutex->created) {
+      return result;
+   }
+
+#if defined(_WIN32)
+   p_mutex->h_mutex = CreateMutex(NULL, FALSE, NULL);
+   result = 0;
+#else
+   result = pthread_mutex_init(&(p_mutex->h_mutex), NULL);
+#endif
+
+   p_mutex->created = 1;
+   p_mutex->stack = 0;
+   p_mutex->thid = 0;
+
+   return result;
+}
+
+
+
+int dbx_mutex_lock(DBXMUTEX *p_mutex, int timeout)
+{
+   int result;
+   DBXTHID tid;
+#ifdef _WIN32
+   DWORD result_wait;
+#endif
+
+   result = 0;
+
+   if (!p_mutex->created) {
+      return -1;
+   }
+
+   tid = dbx_current_thread_id();
+   if (p_mutex->thid == tid) {
+      p_mutex->stack ++;
+      /* printf("\r\n thread already owns lock : thid=%lu; stack=%d;\r\n", (unsigned long) tid, p_mutex->stack); */
+      return 0; /* success - thread already owns lock */
+   }
+
+#if defined(_WIN32)
+   if (timeout == 0) {
+      result_wait = WaitForSingleObject(p_mutex->h_mutex, INFINITE);
+   }
+   else {
+      result_wait = WaitForSingleObject(p_mutex->h_mutex, (timeout * 1000));
+   }
+
+   if (result_wait == WAIT_OBJECT_0) { /* success */
+      result = 0;
+   }
+   else if (result_wait == WAIT_ABANDONED) {
+      printf("\r\ndbx_mutex_lock: Returned WAIT_ABANDONED state");
+      result = -1;
+   }
+   else if (result_wait == WAIT_TIMEOUT) {
+      printf("\r\ndbx_mutex_lock: Returned WAIT_TIMEOUT state");
+      result = -1;
+   }
+   else if (result_wait == WAIT_FAILED) {
+      printf("\r\ndbx_mutex_lock: Returned WAIT_FAILED state: Error Code: %d", GetLastError());
+      result = -1;
+   }
+   else {
+      printf("\r\ndbx_mutex_lock: Returned Unrecognized state: %d", result_wait);
+      result = -1;
+   }
+#else
+   result = pthread_mutex_lock(&(p_mutex->h_mutex));
+#endif
+
+   p_mutex->thid = tid;
+   p_mutex->stack = 0;
+
+   return result;
+}
+
+
+int dbx_mutex_unlock(DBXMUTEX *p_mutex)
+{
+   int result;
+   DBXTHID tid;
+
+   result = 0;
+
+   if (!p_mutex->created) {
+      return -1;
+   }
+
+   tid = dbx_current_thread_id();
+   if (p_mutex->thid == tid && p_mutex->stack) {
+      /* printf("\r\n thread has stacked locks : thid=%lu; stack=%d;\r\n", (unsigned long) tid, p_mutex->stack); */
+      p_mutex->stack --;
+      return 0;
+   }
+   p_mutex->thid = 0;
+   p_mutex->stack = 0;
+
+#if defined(_WIN32)
+   ReleaseMutex(p_mutex->h_mutex);
+   result = 0;
+#else
+   result = pthread_mutex_unlock(&(p_mutex->h_mutex));
+#endif /* #if defined(_WIN32) */
+
+   return result;
+}
+
+
+int dbx_mutex_destroy(DBXMUTEX *p_mutex)
+{
+   int result;
+
+   if (!p_mutex->created) {
+      return -1;
+   }
+
+#if defined(_WIN32)
+   CloseHandle(p_mutex->h_mutex);
+   result = 0;
+#else
+   result = pthread_mutex_destroy(&(p_mutex->h_mutex));
+#endif
+
+   p_mutex->created = 0;
+
+   return result;
+}
+
+
+int dbx_enter_critical_section(void *p_crit)
+{
+   int result;
+
+#if defined(_WIN32)
+   EnterCriticalSection((LPCRITICAL_SECTION) p_crit);
+   result = 0;
+#else
+   result = pthread_mutex_lock((pthread_mutex_t *) p_crit);
+#endif
+   return result;
+}
+
+
+int dbx_leave_critical_section(void *p_crit)
+{
+   int result;
+
+#if defined(_WIN32)
+   LeaveCriticalSection((LPCRITICAL_SECTION) p_crit);
+   result = 0;
+#else
+   result = pthread_mutex_unlock((pthread_mutex_t *) p_crit);
+#endif
+   return result;
+}
+
+
+int dbx_sleep(unsigned long msecs)
+{
+#if defined(_WIN32)
+
+   Sleep((DWORD) msecs);
+
+#else
+
+#if 1
+   unsigned int secs, msecs_rem;
+
+   secs = (unsigned int) (msecs / 1000);
+   msecs_rem = (unsigned int) (msecs % 1000);
+
+   /* printf("\n   ===> msecs=%ld; secs=%ld; msecs_rem=%ld", msecs, secs, msecs_rem); */
+
+   if (secs > 0) {
+      sleep(secs);
+   }
+   if (msecs_rem > 0) {
+      usleep((useconds_t) (msecs_rem * 1000));
+   }
+
+#else
+   unsigned int secs;
+
+   secs = (unsigned int) (msecs / 1000);
+   if (secs == 0)
+      secs = 1;
+   sleep(secs);
+
+#endif
+
+#endif
+
+   return 0;
+}
+
+
+
+int dbx_fopen(FILE **pfp, const char *file, const char *mode)
+{
+   int n;
+
+   n = 0;
+#if defined(DBX_USE_SECURE_CRT)
+   n = (int) fopen_s(pfp, file, mode);
+#else
+   *pfp = fopen(file, mode);
+#endif
+   return n;
+}
+
+
+int dbx_strcpy_s(char *to, size_t size, const char *from, const char *file, const char *fun, const unsigned int line)
+{
+   size_t len_to;
+
+   len_to = strlen(from);
+
+   if (len_to > (size - 1)) {
+      char buffer[256];
+#if defined(DBX_USE_SECURE_CRT)
+      sprintf_s(buffer, _dbxso(buffer), "Buffer Size Error: Function: strcpy_s([%lu], [%lu])    file=%s; fun=%s; line=%u;", (unsigned long) size, (unsigned long) len_to, file, fun, line);
+#else
+      sprintf(buffer, "Buffer Size Error: Function: strcpy([%lu], [%lu])    file=%s; fun=%s; line=%u;", (unsigned long) size, (unsigned long) len_to, file, fun, line);
+#endif
+      printf("\r\n%s", buffer);
+   }
+
+#if defined(DBX_USE_SECURE_CRT)
+#if defined(_WIN32)
+   strcpy_s(to, size, from);
+#else
+   strcpy_s(to, size, from);
+#endif
+#else
+   strcpy(to, from);
+#endif
+   return 0;
+}
+
+
+int dbx_strncpy_s(char *to, size_t size, const char *from, size_t count, const char *file, const char *fun, const unsigned int line)
+{
+   if (count > size) {
+      char buffer[256];
+#if defined(DBX_USE_SECURE_CRT)
+      sprintf_s(buffer, _dbxso(buffer), "Buffer Size Error: Function: strncpy_s([%lu], [%lu])    file=%s; fun=%s; line=%u;", (unsigned long) size, (unsigned long) count, file, fun, line);
+#else
+      sprintf(buffer, "Buffer Size Error: Function: strncpy([%lu], [%lu])    file=%s; fun=%s; line=%u;", (unsigned long) size, (unsigned long) count, file, fun, line);
+#endif
+      printf("\r\n%s", buffer);
+   }
+
+#if defined(DBX_USE_SECURE_CRT)
+#if defined(_WIN32)
+   /* strncpy_s(to, size, from, count); */
+   memcpy_s(to, size, from, count);
+#else
+   strncpy_s(to, size, from, count);
+#endif
+#else
+   strncpy(to, from, count);
+#endif
+   return 0;
+}
+
+int dbx_strcat_s(char *to, size_t size, const char *from, const char *file, const char *fun, const unsigned int line)
+{
+   size_t len_to, len_from;
+
+   len_to = strlen(to);
+   len_from = strlen(from);
+
+   if (len_from > ((size - len_to) - 1)) {
+      char buffer[256];
+#if defined(DBX_USE_SECURE_CRT)
+      sprintf_s(buffer, _dbxso(buffer), "Buffer Size Error: Function: strcat_s([%lu <= (%lu-%lu)], [%lu])    file=%s; fun=%s; line=%u;", (unsigned long) (size - len_to), (unsigned long) size, (unsigned long) len_to, (unsigned long) len_from , file, fun, line);
+#else
+      sprintf(buffer, "Buffer Size Error: Function: strcat([%lu <= (%lu-%lu)], [%lu])    file=%s; fun=%s; line=%u;", (unsigned long) (size - len_to), (unsigned long) size, (unsigned long) len_to, (unsigned long) len_from, file, fun, line);
+#endif
+      printf("\r\n%s", buffer);
+
+   }
+#if defined(DBX_USE_SECURE_CRT)
+#if defined(_WIN32)
+   strcat_s(to, size, from);
+#else
+   strcat_s(to, size, from);
+#endif
+#else
+   strcat(to, from);
+#endif
+
+   return 0;
+}
+
+int dbx_strncat_s(char *to, size_t size, const char *from, size_t count, const char *file, const char *fun, const unsigned int line)
+{
+   size_t len_to;
+
+   len_to = strlen(to);
+
+   if (count > (size - len_to)) {
+      char buffer[256];
+#if defined(DBX_USE_SECURE_CRT)
+      sprintf_s(buffer, _dbxso(buffer), "Buffer Size Error: Function: strncat_s([%lu <= (%lu-%lu)], [%lu])    file=%s; fun=%s; line=%u;", (unsigned long) (size - len_to), (unsigned long) size, (unsigned long) len_to, (unsigned long) count , file, fun, line);
+#else
+      sprintf(buffer, "Buffer Size Error: Function: strncat([%lu <= (%lu-%lu)], [%lu])    file=%s; fun=%s; line=%u;", (unsigned long) (size - len_to), (unsigned long) size, (unsigned long) len_to, (unsigned long) count , file, fun, line);
+#endif
+      printf("\r\n%s", buffer);
+   }
+
+#if defined(DBX_USE_SECURE_CRT)
+#if defined(_WIN32)
+   strncat_s(to, size, from, count);
+#else
+   strncat_s(to, size, from, count);
+#endif
+#else
+   strncat(to, from, count);
+#endif
+
+   return 0;
+}
+
+
+int dbx_sprintf_s(char *to, size_t size, const char *format, const char *file, const char *fun, const unsigned int line, ...)
+{
+   va_list arg;
+   size_t len_to;
+   int ret, i;
+   long l;
+   char *p, *s, c;
+   void *pv;
+   char buffer[32];
+
+   va_start(arg, line);
+
+   /* Estimate size required based on types commonly used in the Gateway */
+   len_to = strlen(format);
+   p = (char *) format;
+   while ((p = strstr(p, "%"))) {
+      p ++;
+      len_to -= 2;
+      if (*p == 's') {
+         s = va_arg(arg, char *);
+         if (s)
+            len_to += strlen(s);
+      }
+      else if (*p == 'c') {
+         c = (char ) va_arg(arg, int);
+         len_to += 1;
+      }
+      else if (*p == 'd' || *p == 'u') {
+         i = va_arg(arg, int);
+#if defined(DBX_USE_SECURE_CRT)
+         sprintf_s(buffer, 32, "%d", i);
+#else
+         sprintf(buffer, "%d", i);
+#endif
+         len_to += strlen(buffer);
+      }
+      else if (*p == 'x') {
+         i = va_arg(arg, int);
+#if defined(DBX_USE_SECURE_CRT)
+         sprintf_s(buffer, 32, "%x", i);
+#else
+         sprintf(buffer, "%x", i);
+#endif
+         len_to += strlen(buffer);
+      }
+      else if (*p == 'l') {
+         len_to --;
+         l = va_arg(arg, long);
+#if defined(DBX_USE_SECURE_CRT)
+         sprintf_s(buffer, 32, "%ld", l);
+#else
+         sprintf(buffer, "%ld", l);
+#endif
+         len_to += strlen(buffer);
+      }
+      else if (*p == 'p') {
+         pv = va_arg(arg, void *);
+#if defined(DBX_USE_SECURE_CRT)
+         sprintf_s(buffer, 32, "%p", pv);
+#else
+         sprintf(buffer, "%p", pv);
+#endif
+         len_to += strlen(buffer);
+      }
+      else {
+         pv = va_arg(arg, void *);
+         len_to += 10;
+      }
+   }
+
+   if (len_to > (size - 1)) {
+      char buffer[256];
+#if defined(DBX_USE_SECURE_CRT)
+      sprintf_s(buffer, _dbxso(buffer), "Buffer Size Error: Function: sprintf_s([%lu], [%lu], ...)    file=%s; fun=%s; line=%u;", (unsigned long) size, (unsigned long) len_to, file, fun, line);
+#else
+      sprintf(buffer, "Buffer Size Error: Function: sprintf([%lu], [%lu], ...)    file=%s; fun=%s; line=%u;", (unsigned long) size, (unsigned long) len_to, file, fun, line);
+#endif
+      printf("\r\n%s", buffer);
+   }
+
+   va_start(arg, line);
+
+#if defined(DBX_USE_SECURE_CRT)
+#if defined(_WIN32)
+   ret = sprintf_s(to, size, format, arg);
+#else
+   ret = vsprintf_s(to, size, format, arg);
+#endif
+#else
+   ret = vsprintf(to, format, arg);
+#endif
+   va_end(arg);
+
+   return ret;
+}
 
