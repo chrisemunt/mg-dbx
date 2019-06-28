@@ -1,0 +1,38 @@
+{
+  "author": "Chris Munt <cmunt@mgateway.com> (http://www.gateway.com/)",
+  "name": "mg-dbx",
+  "description": "High speed Synchronous and Asynchronous access to M-like databases from Node.js.",
+  "version": "1.0.2",
+  "maintainers": "Chris Munt <cmunt@mgateway.com>",
+  "homepage": "https://github.com/chrisemunt/mg-dbx",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chrisemunt/mg-dbx.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chrisemunt/mg-dbx/issues"
+  },
+  "os": [
+    "linux",
+    "darwin",
+    "win32"
+  ],
+  "keywords": [
+    "tcp",
+    "http",
+    "network"
+  ],
+  "scripts": {
+    "install": "node-gyp rebuild",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "main": "./build/Release/mg-dbx",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=8.0.x"
+  },
+  "gypfile": true,
+  "directories": {
+    "doc": "doc"
+  }
+}
