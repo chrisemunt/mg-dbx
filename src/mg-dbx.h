@@ -1,6 +1,6 @@
 /*
    ----------------------------------------------------------------------------
-   | mg-dbx.node                                                            |
+   | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
    | Copyright (c) 2016-2017 M/Gateway Developments Ltd,                      |
@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "1"
 #define DBX_VERSION_MINOR        "0"
-#define DBX_VERSION_BUILD        "1"
+#define DBX_VERSION_BUILD        "3"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 

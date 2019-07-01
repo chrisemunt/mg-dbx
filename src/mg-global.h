@@ -1,6 +1,6 @@
 /*
    ----------------------------------------------------------------------------
-   | mg-dbx.node                                                            |
+   | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
    | Copyright (c) 2016-2017 M/Gateway Developments Ltd,                      |

@@ -1,7 +1,27 @@
 /*
-   Access to Cache and Globals from Node.js
-
-   Chris Munt
+   ----------------------------------------------------------------------------
+   | mg-dbx.node                                                              |
+   | Author: Chris Munt cmunt@mgateway.com                                    |
+   |                    chris.e.munt@gmail.com                                |
+   | Copyright (c) 2016-2017 M/Gateway Developments Ltd,                      |
+   | Surrey UK.                                                               |
+   | All rights reserved.                                                     |
+   |                                                                          |
+   | http://www.mgateway.com                                                  |
+   |                                                                          |
+   | Licensed under the Apache License, Version 2.0 (the "License"); you may  |
+   | not use this file except in compliance with the License.                 |
+   | You may obtain a copy of the License at                                  |
+   |                                                                          |
+   | http://www.apache.org/licenses/LICENSE-2.0                               |
+   |                                                                          |
+   | Unless required by applicable law or agreed to in writing, software      |
+   | distributed under the License is distributed on an "AS IS" BASIS,        |
+   | WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. |
+   | See the License for the specific language governing permissions and      |
+   | limitations under the License.                                           |      
+   |                                                                          |
+   ----------------------------------------------------------------------------
 */
 
 
@@ -315,11 +335,12 @@ int DBX_DBNAME::dbx_ibuffer_add(DBXCON *pcon, v8::Isolate * isolate, int argn, L
    pcon->ibuffer_used += 5;
    p = (pcon->ibuffer + pcon->ibuffer_used);
    if (buffer) {
-      T_STRNCPY((char *) p, (pcon->ibuffer_size - pcon->ibuffer_used), buffer, buffer_len);
+      T_STRNCPY((char *) p, (pcon->ibuffer_size - pcon->ibuffer_used), buffer, len);
    }
    else {
       dbx_write_char8(isolate, str, (char *) p, pcon->utf8);
    }
+   pcon->ibuffer_used += len;
 
    pcon->args[argn].svalue.buf_addr = (char *) p;
    pcon->args[argn].svalue.len_alloc = len;
@@ -338,8 +359,6 @@ int DBX_DBNAME::dbx_ibuffer_add(DBXCON *pcon, v8::Isolate * isolate, int argn, L
          pcon->args[argn].svalue.len_alloc ++;
          pcon->args[argn].svalue.buf_addr[0] = '^';
       }
-
-
    }
 
 
@@ -735,7 +754,7 @@ int DBX_DBNAME::GlobalReference(const FunctionCallbackInfo<Value>& args, DBXCON 
    }
 
    if (pcon->dbtype != DBX_DBTYPE_YOTTADB && context == 0) {
-      if (pcon->args[0].svalue.buf_addr[0] == '^')
+      if (pcon->args[nx].svalue.buf_addr[nx] == '^')
          rc = pcon->p_isc_so->p_CachePushGlobal((int) pcon->args[nx].svalue.len_used - 1, (Callin_char_t *) pcon->args[nx].svalue.buf_addr + 1);
       else
          rc = pcon->p_isc_so->p_CachePushGlobal((int) pcon->args[nx].svalue.len_used, (Callin_char_t *) pcon->args[nx].svalue.buf_addr);
@@ -750,7 +769,7 @@ int DBX_DBNAME::GlobalReference(const FunctionCallbackInfo<Value>& args, DBXCON 
       if (args[n]->IsInt32()) {
          pcon->args[nx].type = DBX_TYPE_INT;
          pcon->args[nx].num.int32 = (int) DBX_INT32_VALUE(args[n]);
-         T_SPRINTF(buffer, _dbxso(buffer), "%d", ne);
+         T_SPRINTF(buffer, _dbxso(buffer), "%d", pcon->args[nx].num.int32);
          dbx_ibuffer_add(pcon, isolate, nx, str, buffer, (int) strlen(buffer), 0);
       }
       else {
@@ -767,11 +786,11 @@ int DBX_DBNAME::GlobalReference(const FunctionCallbackInfo<Value>& args, DBXCON 
          }
       }
       if (pcon->dbtype != DBX_DBTYPE_YOTTADB && context == 0) {
-         if (pcon->args[n].type == DBX_TYPE_INT) {
+         if (pcon->args[nx].type == DBX_TYPE_INT) {
             rc = pcon->p_isc_so->p_CachePushInt((int) pcon->args[nx].num.int32);
          }
          else {
-            if (pcon->args[n].svalue.len_used < CACHE_MAXSTRLEN) {
+            if (pcon->args[nx].svalue.len_used < CACHE_MAXSTRLEN) {
                rc = rc = pcon->p_isc_so->p_CachePushStr(pcon->args[nx].svalue.len_used, (Callin_char_t *) pcon->args[nx].svalue.buf_addr);
             }
             else {
