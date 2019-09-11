@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2017 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2019 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "1"
 #define DBX_VERSION_MINOR        "0"
-#define DBX_VERSION_BUILD        "3"
+#define DBX_VERSION_BUILD        "4"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -241,19 +241,59 @@
 
 #if DBX_NODE_VERSION >= 120000
 
-#define DBX_GET_SCOPE \
-   Isolate* isolate = args.GetIsolate(); \
-   Local<Context> icontext = isolate->GetCurrentContext(); \
-   HandleScope scope(isolate); \
+#define DBX_GET_ISOLATE \
+   if (c->isolate == NULL) { \
+      c->isolate = args.GetIsolate(); \
+      HandleScope scope(c->isolate); \
+   } \
+   Isolate* isolate = c->isolate; \
+
+#define DBX_GET_ICONTEXT \
+   if (c->isolate == NULL) { \
+      c->isolate = args.GetIsolate(); \
+      HandleScope scope(c->isolate); \
+   } \
+   if (c->got_icontext == 0) { \
+      c->icontext = c->isolate->GetCurrentContext(); \
+      c->got_icontext = 1; \
+   } \
+   Isolate* isolate = c->isolate; \
+   Local<Context> icontext = c->icontext; \
 
 #else
 
-#define DBX_GET_SCOPE \
-   Isolate* isolate = args.GetIsolate(); \
-   HandleScope scope(isolate); \
+#define DBX_GET_ISOLATE \
+   if (c->isolate == NULL) { \
+      c->isolate = args.GetIsolate(); \
+      HandleScope scope(c->isolate); \
+   } \
+   Isolate* isolate = c->isolate; \
+
+#define DBX_GET_ICONTEXT \
+   if (c->isolate == NULL) { \
+      c->isolate = args.GetIsolate(); \
+      HandleScope scope(c->isolate); \
+   } \
+   Isolate* isolate = c->isolate; \
 
 #endif
 
+
+#if DBX_NODE_VERSION >= 120000
+
+#define DBX_DBFUN_START(C, PCFUN) \
+   if (!C->open) { \
+      if (PCFUN && PCFUN->error[0]) { \
+         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, PCFUN->error, NewStringType::kNormal).ToLocalChecked())); \
+         return; \
+      } \
+      else { \
+         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Database not open", NewStringType::kNormal).ToLocalChecked())); \
+         return; \
+      } \
+   } \
+
+#else
 
 #define DBX_DBFUN_START(C, PCFUN) \
    if (!C->open) { \
@@ -267,10 +307,12 @@
       } \
    } \
 
+#endif
 
 #if DBX_NODE_VERSION >= 120000
-#define DBX_TO_OBJECT(a)            a->ToObject(isolate)
-#define DBX_TO_STRING(a)            a->ToString(isolate)
+#define DBX_GET(a,b)                a->Get(icontext,b).ToLocalChecked()
+#define DBX_TO_OBJECT(a)            a->ToObject(icontext).ToLocalChecked()
+#define DBX_TO_STRING(a)            a->ToString(icontext).ToLocalChecked()
 #define DBX_NUMBER_VALUE(a)         a->NumberValue(icontext).ToChecked()
 #define DBX_INT32_VALUE(a)          a->Int32Value(icontext).FromJust()
 #define DBX_WRITE_UTF8(a,b)         a->WriteUtf8(isolate, b)
@@ -279,6 +321,7 @@
 #define DBX_UTF8_LENGTH(a)          a->Utf8Length(isolate)
 #define DBX_LENGTH(a)               a->Length()
 #else
+#define DBX_GET(a,b)                a->Get(b)
 #define DBX_TO_OBJECT(a)            a->ToObject()
 #define DBX_TO_STRING(a)            a->ToString()
 #define DBX_NUMBER_VALUE(a)         a->NumberValue()
@@ -510,6 +553,7 @@ typedef struct tagDBXVAL {
    unsigned long  offs;
    ydb_buffer_t svalue;
    DBXCVAL cvalue;
+   struct tagDBXVAL *pnext;
 } DBXVAL, *PDBXVAL;
 
 
@@ -525,6 +569,7 @@ typedef struct tagDBXFUN {
 
 typedef struct tagDBXGREF {
    char *         global;
+   DBXVAL *       pkey;
 } DBXGREF, *PDBXGREF;
 
 typedef struct tagDBXFREF {
@@ -665,6 +710,7 @@ typedef struct tagDBXCON {
    unsigned int   ibuffer_used;
    unsigned char *ibuffer;
    int            argc;
+   int            cargc;
    DBXVAL         args[DBX_MAXARGS];
    ydb_buffer_t   yargs[DBX_MAXARGS];
    DBXVAL         output_val;
@@ -674,7 +720,7 @@ typedef struct tagDBXCON {
    DBXISCSO       *p_isc_so;
    DBXYDBSO       *p_ydb_so;
 
-   void *         (* p_dbxfun) (struct tagDBXCON * pcon);
+   int            (* p_dbxfun) (struct tagDBXCON * pcon);
 
    v8::Isolate    *isolate;
 
@@ -713,7 +759,10 @@ public:
    DBXZV zv;
    DBXDEBUG       debug;
 
-   v8::Isolate    *isolate;
+   v8::Isolate             *isolate;
+   v8::Local<v8::Context>  icontext;
+   short                   got_icontext;
+
    static v8::Persistent<v8::Function> s_ct;
 
    struct dbx_baton_t {
@@ -757,7 +806,7 @@ public:
    static void                   Version(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Open(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Close(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static int                    GlobalReference(const v8::FunctionCallbackInfo<v8::Value>& args, DBXCON *pcon, DBXGREF *pgref, short context);
+   static int                    GlobalReference(DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXCON *pcon, DBXGREF *pgref, short context);
    static void                   Get(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Set(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Defined(const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -767,8 +816,10 @@ public:
    static void                   Sleep(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   MGlobal(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   MGlobal_Close(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static int                    ExtFunctionReference(const v8::FunctionCallbackInfo<v8::Value>& args, DBXCON *pcon, DBXFREF *pfref, DBXFUN *pfun, short context);
+   static int                    ExtFunctionReference(DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXCON *pcon, DBXFREF *pfref, DBXFUN *pfun, short context);
    static void                   ExtFunction(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+   static void                   Benchmark(const v8::FunctionCallbackInfo<v8::Value>& args);
 
 };
 
@@ -796,6 +847,7 @@ int                     dbx_version                (DBXCON *pcon);
 int                     dbx_open                   (DBXCON *pcon);
 int                     dbx_do_nothing             (DBXCON *pcon);
 int                     dbx_close                  (DBXCON *pcon);
+int                     dbx_reference              (DBXCON *pcon, int n);
 int                     dbx_global_reference       (DBXCON *pcon);
 
 int                     dbx_get                    (DBXCON *pcon);

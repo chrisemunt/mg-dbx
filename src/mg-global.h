@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2017 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2019 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -45,6 +45,7 @@ class mglobal : public node::ObjectWrap
 
    short          open;
    char           global_name[256];
+   DBXVAL         *pkey;
    DBXCON         *pcon;
    int m_count;
    DBX_DBNAME *c;
@@ -67,7 +68,7 @@ class mglobal : public node::ObjectWrap
    static void Delete(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void Next(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void Previous(const v8::FunctionCallbackInfo<v8::Value>& args);
-
+   static void Reset(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void Close(const v8::FunctionCallbackInfo<v8::Value>& args);
 
    inline double value() const { return value_; }
