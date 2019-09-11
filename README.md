@@ -3,8 +3,10 @@
 High speed Synchronous and Asynchronous access to M-like databases from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-28 June 2019, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+7 September 2019, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
+* Verified to work with Node.js v4 to v12.
+* [Release Notes](#RelNotes) can be found at the end of this document.
 
 ## Pre-requisites 
 
@@ -106,19 +108,23 @@ Assuming an 'out of the box' YottaDB installation under **/usr/local/lib/yottadb
 
 ### Invocation of database commands
 
-#### Register a global name
+#### Register a global name (and fixed key)
 
-      var person = db.mglobal("Person");
+       global := db.mglobal(<global_name>[, <fixed_key>])
+
+Example (using a global named "Person"):
+
+       var person = db.mglobal("Person");
 
 #### Set a record
 
 Synchronous:
 
-       var result = person.set(<key>, <data>);
+       var result = <global>.set(<key>, <data>);
 
 Asynchronous:
 
-       person.set(<key>, <data>, callback(<error>, <result>));
+       <global>.set(<key>, <data>, callback(<error>, <result>));
       
 Example:
 
@@ -128,11 +134,11 @@ Example:
 
 Synchronous:
 
-       var result = person.get(<key>);
+       var result = <global>.get(<key>);
 
 Asynchronous:
 
-       person.set(<key>, callback(<error>, <result>));
+       <global>.set(<key>, callback(<error>, <result>));
       
 Example:
 
@@ -142,11 +148,11 @@ Example:
 
 Synchronous:
 
-       var result = person.delete(<key>);
+       var result = <global>.delete(<key>);
 
 Asynchronous:
 
-       peeson.delete(<key>, callback(<error>, <result>));
+       <global>.delete(<key>, callback(<error>, <result>));
       
 Example:
 
@@ -157,11 +163,11 @@ Example:
 
 Synchronous:
 
-       var result = person.defined(<key>);
+       var result = <global>.defined(<key>);
 
 Asynchronous:
 
-       person.defined(<key>, callback(<error>, <result>));
+       <global>.defined(<key>, callback(<error>, <result>));
       
 Example:
 
@@ -172,11 +178,11 @@ Example:
 
 Synchronous:
 
-       var result = person.next(<key>);
+       var result = <global>.next(<key>);
 
 Asynchronous:
 
-       person.next(<key>, callback(<error>, <result>));
+       <global>.next(<key>, callback(<error>, <result>));
       
 Example:
 
@@ -190,11 +196,11 @@ Example:
 
 Synchronous:
 
-       var result = person.previous(<key>);
+       var result = <global>.previous(<key>);
 
 Asynchronous:
 
-       person.previous(<key>, callback(<error>, <result>));
+       <global>.previous(<key>, callback(<error>, <result>));
       
 Example:
 
@@ -202,6 +208,21 @@ Example:
        while ((key = person.previous(key)) != "") {
           console.log("\nPerson: " + key + ' : ' + person.get(key));
        }
+
+
+#### Reset a global name (and fixed key)
+
+       <global>.reset(<global_name>[, <fixed_key>]);
+
+Example:
+
+       // Process orders for customer #1
+       customer_orders = db.mglobal("Customer", 1, "orders")
+       do_work ...
+
+       // Process orders for customer #2
+       customer_orders.reset("Customer", 2, "orders");
+       do_work ...
 
 
 ### Invocation of database functions
@@ -255,4 +276,15 @@ Licensed under the Apache License, Version 2.0 (the "License"); you may not use 
       http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.      
+
+## <a name="RelNotes"></a>Release Notes
+
+### v1.0.3 (28 June 2019)
+
+* Initial Release
+
+### v1.0.4 (7 September 2019)
+
+* Allow a global to be registered with a fixed leading key (i.e. leading fixed subscripts).
+* Introduce a method to reset a global name (and any associated fixed keys).
 
