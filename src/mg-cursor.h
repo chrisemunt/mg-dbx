@@ -24,19 +24,26 @@
    ----------------------------------------------------------------------------
 */
 
-#ifndef MG_GLOBAL_H
-#define MG_GLOBAL_H
+#ifndef MG_CURSOR_H
+#define MG_CURSOR_H
 
-class mglobal : public node::ObjectWrap
+class mcursor : public node::ObjectWrap
 {
    public:
 
    short          open;
+   short          context;
+   short          getdata;
+   short          multilevel;
+   short          format;
    char           global_name[256];
-   DBXVAL         *pkey;
+   DBXQR          *pqr_prev;
+   DBXQR          *pqr_next;
    DBXCON         *pcon;
+   DBXSTR         data;
    int            m_count;
    DBX_DBNAME     *c;
+
 
 #if DBX_NODE_VERSION >= 100000
    static void                   Init(v8::Local<v8::Object> target);
@@ -50,35 +57,30 @@ class mglobal : public node::ObjectWrap
    static void dbx_set_prototype_method(v8::Handle<v8::FunctionTemplate> t, v8::FunctionCallback callback, const char* name, const char* data);
 #endif
 
-   static mglobal * NewInstance(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static mcursor * NewInstance(const v8::FunctionCallbackInfo<v8::Value>& args);
 
-   static int delete_mglobal_template(mglobal *cx);
+   static int delete_mcursor_template(mcursor *cx);
 
-   static void Get(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Set(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Defined(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Delete(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void Next(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void Previous(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Increment(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Lock(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Unlock(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void Reset(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void Close(const v8::FunctionCallbackInfo<v8::Value>& args);
 
    inline double value() const { return value_; }
 
-   explicit mglobal(double value = 0);
-   ~mglobal();
+   explicit mcursor(double value = 0);
+   ~mcursor();
 
    private:
 
    static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
    static v8::Persistent<v8::Function> constructor;
 
+
    double value_;
 };
 
+int dbx_escape_output(DBXSTR *pdata, char *item, int item_len, short context);
 
 #endif
 

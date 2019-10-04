@@ -39,15 +39,18 @@ mglobal::mglobal(double value) : value_(value)
 
 mglobal::~mglobal()
 {
-   delete_class_template(this);
+   delete_mglobal_template(this);
 }
 
 
-void mglobal::Init()
+#if DBX_NODE_VERSION >= 100000
+void mglobal::Init(Local<Object> target)
+#else
+void mglobal::Init(Handle<Object> target)
+#endif
 {
 #if DBX_NODE_VERSION >= 120000
-   /* Isolate* isolate = target->GetIsolate(); */
-   Isolate* isolate = Isolate::GetCurrent();
+   Isolate* isolate = target->GetIsolate();
 
    Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
    tpl->SetClassName(String::NewFromUtf8(isolate, "mglobal", NewStringType::kNormal).ToLocalChecked());
@@ -69,6 +72,9 @@ void mglobal::Init()
    DBX_NODE_SET_PROTOTYPE_METHODC("delete", Delete);
    DBX_NODE_SET_PROTOTYPE_METHODC("next", Next);
    DBX_NODE_SET_PROTOTYPE_METHODC("previous", Previous);
+   DBX_NODE_SET_PROTOTYPE_METHODC("increment", Increment);
+   DBX_NODE_SET_PROTOTYPE_METHODC("lock", Lock);
+   DBX_NODE_SET_PROTOTYPE_METHODC("unlock", Unlock);
    DBX_NODE_SET_PROTOTYPE_METHODC("reset", Reset);
    DBX_NODE_SET_PROTOTYPE_METHODC("_close", Close);
 
@@ -85,7 +91,7 @@ void mglobal::Init()
 void mglobal::New(const FunctionCallbackInfo<Value>& args)
 {
    Isolate* isolate = args.GetIsolate();
-#if DBX_NODE_VERSION >= 120000
+#if DBX_NODE_VERSION >= 100000
    Local<Context> icontext = isolate->GetCurrentContext();
 #endif
    HandleScope scope(isolate);
@@ -122,7 +128,7 @@ void mglobal::New(const FunctionCallbackInfo<Value>& args)
 #if DBX_NODE_VERSION >= 100000
       args.GetReturnValue().Set(cons->NewInstance(isolate->GetCurrentContext(), argc, argv).ToLocalChecked());
 #else
-      args.GetReturnValue().Set(cons->NewInstance(argc, argv));
+      args.GetReturnValue().Set(cons->NewInstance(isolate->GetCurrentContext(), argc, argv).ToLocalChecked());
 #endif
    }
 
@@ -171,48 +177,38 @@ void mglobal::dbx_set_prototype_method(Handle<FunctionTemplate> t, FunctionCallb
 }
 
 
-mglobal * mglobal::NewInstance(const FunctionCallbackInfo<Value>& args, char *cls_str, char *cls_info)
+mglobal * mglobal::NewInstance(const FunctionCallbackInfo<Value>& args)
 {
    Isolate* isolate = args.GetIsolate();
-#if DBX_NODE_VERSION >= 120000
    Local<Context> icontext = isolate->GetCurrentContext();
-#endif
    HandleScope scope(isolate);
+
 #if DBX_NODE_VERSION >= 100000
    Local<Value> argv[2];
 #else
    Handle<Value> argv[2];
 #endif
-   const unsigned argc = 2;
-
-#if DBX_NODE_VERSION >= 100000
-   Local<String> cls_info_str = String::NewFromOneByte(isolate, (uint8_t *) cls_info, NewStringType::kInternalized).ToLocalChecked();
-#else
-   Local<String> cls_info_str = String::NewFromOneByte(isolate, (uint8_t *) cls_info);
-#endif
+   const unsigned argc = 1;
 
    argv[0] = args[0];
-   argv[1] = cls_info_str;
 
    Local<Function> cons = Local<Function>::New(isolate, constructor);
 
 #if DBX_NODE_VERSION >= 100000
-   Local<Object> instance = cons->NewInstance(isolate->GetCurrentContext(), argc, argv).ToLocalChecked();
+   Local<Object> instance = cons->NewInstance(icontext, argc, argv).ToLocalChecked();
 #else
-   Local<Object> instance = cons->NewInstance(argc, argv);
+   Local<Object> instance = cons->NewInstance(icontext, argc, argv).ToLocalChecked();
 #endif
  
-   mglobal *cls = ObjectWrap::Unwrap<mglobal>(instance);
-
-   DBX_WRITE_UTF8(DBX_TO_STRING(args[0]), cls->global_name);
+   mglobal *gx = ObjectWrap::Unwrap<mglobal>(instance);
 
    args.GetReturnValue().Set(instance);
 
-   return cls;
+   return gx;
 }
 
 
-int mglobal::delete_class_template(mglobal *cx)
+int mglobal::delete_mglobal_template(mglobal *cx)
 {
    return 0;
 }
@@ -242,6 +238,8 @@ void mglobal::Get(const FunctionCallbackInfo<Value>& args)
    
    DBX_DBFUN_START(c, pcon);
 
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = c->GlobalReference(c, args, pcon, &gref, async);
 
    if (async) {
@@ -311,6 +309,8 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
    
    DBX_DBFUN_START(c, pcon);
 
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = c->GlobalReference(c, args, pcon, &gref, async);
 
    if (async) {
@@ -377,6 +377,8 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
    
    DBX_DBFUN_START(c, pcon);
 
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = c->GlobalReference(c, args, pcon, &gref, async);
 
    if (async) {
@@ -444,6 +446,8 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
    
    DBX_DBFUN_START(c, pcon);
 
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = c->GlobalReference(c, args, pcon, &gref, async);
 
    if (async) {
@@ -509,6 +513,8 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
    
    DBX_DBFUN_START(c, pcon);
 
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = c->GlobalReference(c, args, pcon, &gref, async);
 
    if (async) {
@@ -574,6 +580,8 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
    
    DBX_DBFUN_START(c, pcon);
 
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = c->GlobalReference(c, args, pcon, &gref, async);
 
    if (async) {
@@ -612,6 +620,239 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
 
    result = c->dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
 
+   args.GetReturnValue().Set(result);
+}
+
+
+void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
+{
+   short async;
+   int rc;
+   DBXCON *pcon;
+   Local<String> result;
+   DBXGREF gref;
+   mglobal *gx = ObjectWrap::Unwrap<mglobal>(args.This());
+   DBX_DBNAME *c = gx->c;
+   DBX_GET_ISOLATE;
+   gx->m_count ++;
+
+   pcon = c->pcon;
+   gref.global = gx->global_name;
+   gref.pkey = gx->pkey;
+
+   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+
+   if (pcon->argc >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Increment", 1)));
+   }
+
+   DBX_DBFUN_START(c, pcon);
+
+   pcon->lock = 0;
+   pcon->increment = 1;
+   rc = c->GlobalReference(c, args, pcon, &gref, async);
+
+   if (async) {
+      DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pcon);
+      baton->pcon->p_dbxfun = (int (*) (struct tagDBXCON * pcon)) dbx_increment;
+      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+      baton->cb.Reset(isolate, cb);
+      gx->Ref();
+      if (c->dbx_queue_task((void *) c->dbx_process_task, (void *) c->dbx_invoke_callback, baton, 0)) {
+         char error[DBX_ERROR_SIZE];
+         T_STRCPY(error, _dbxso(error), pcon->error);
+         c->dbx_destroy_baton(baton, pcon);
+         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+      }
+      return;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = pcon->p_ydb_so->p_ydb_incr_s(&(pcon->args[0].svalue), pcon->cargc - 2, &pcon->yargs[0], &(pcon->args[pcon->cargc - 1].svalue), &(pcon->output_val.svalue));
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheGlobalIncrement(pcon->cargc - 2);
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
+         isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+      }
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+   DBX_DBFUN_END(c);
+   DBX_DB_UNLOCK(rc);
+
+   result = c->dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   args.GetReturnValue().Set(result);
+}
+
+
+void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
+{
+   short async;
+   int rc, retval;
+   DBXCON *pcon;
+   Local<String> result;
+   DBXGREF gref;
+   mglobal *gx = ObjectWrap::Unwrap<mglobal>(args.This());
+   DBX_DBNAME *c = gx->c;
+   DBX_GET_ISOLATE;
+   gx->m_count ++;
+
+   pcon = c->pcon;
+   gref.global = gx->global_name;
+   gref.pkey = gx->pkey;
+
+   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+
+   if (pcon->argc >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Lock", 1)));
+   }
+   if (pcon->argc < 1) {
+      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Missing or invalid global name on Lock", 1)));
+   }
+
+   DBX_DBFUN_START(c, pcon);
+
+   pcon->lock = 1;
+   pcon->increment = 0;
+   rc = c->GlobalReference(c, args, pcon, &gref, async);
+
+   if (async) {
+      DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pcon);
+      baton->pcon->p_dbxfun = (int (*) (struct tagDBXCON * pcon)) dbx_lock;
+      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+      baton->cb.Reset(isolate, cb);
+      gx->Ref();
+      if (c->dbx_queue_task((void *) c->dbx_process_task, (void *) c->dbx_invoke_callback, baton, 0)) {
+         char error[DBX_ERROR_SIZE];
+         T_STRCPY(error, _dbxso(error), pcon->error);
+         c->dbx_destroy_baton(baton, pcon);
+         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+      }
+      return;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      int timeout;
+      unsigned long long timeout_nsec;
+      timeout = (int) strtol(pcon->args[pcon->cargc - 1].svalue.buf_addr, NULL,10);
+      timeout_nsec = 1000000000;
+      if (timeout < 0)
+         timeout_nsec *= 3600;
+      else
+         timeout_nsec *= timeout;
+      rc = pcon->p_ydb_so->p_ydb_lock_incr_s(timeout_nsec, &(pcon->args[0].svalue), pcon->cargc - 2, &pcon->yargs[0]);
+      if (rc == YDB_OK) {
+         retval = 1;
+         rc = YDB_OK;
+      }
+      else if (rc == YDB_LOCK_TIMEOUT) {
+         retval = 0;
+         rc = YDB_OK;
+      }
+      else {
+         retval = 0;
+         rc = CACHE_FAILURE;
+      }
+   }
+   else {
+      int timeout, locktype;
+      locktype = CACHE_INCREMENTAL_LOCK;
+      timeout = (int) strtol(pcon->args[pcon->cargc - 1].svalue.buf_addr, NULL, 10);
+      rc =  pcon->p_isc_so->p_CacheAcquireLock(pcon->cargc - 2, locktype, timeout, &retval);
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      dbx_create_string(&(pcon->output_val.svalue), (void *) &retval, DBX_TYPE_INT);
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+   DBX_DBFUN_END(c);
+   DBX_DB_UNLOCK(rc);
+
+   result = c->dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   args.GetReturnValue().Set(result);
+}
+
+
+void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
+{
+   short async;
+   int rc, retval;
+   DBXCON *pcon;
+   Local<String> result;
+   DBXGREF gref;
+   mglobal *gx = ObjectWrap::Unwrap<mglobal>(args.This());
+   DBX_DBNAME *c = gx->c;
+   DBX_GET_ISOLATE;
+   gx->m_count ++;
+
+   pcon = c->pcon;
+   gref.global = gx->global_name;
+   gref.pkey = gx->pkey;
+
+   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+
+   if (pcon->argc >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Unlock", 1)));
+   }
+
+   DBX_DBFUN_START(c, pcon);
+
+   pcon->lock = 2;
+   pcon->increment = 0;
+   rc = c->GlobalReference(c, args, pcon, &gref, async);
+
+   if (async) {
+      DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pcon);
+      baton->pcon->p_dbxfun = (int (*) (struct tagDBXCON * pcon)) dbx_unlock;
+      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+      baton->cb.Reset(isolate, cb);
+      gx->Ref();
+      if (c->dbx_queue_task((void *) c->dbx_process_task, (void *) c->dbx_invoke_callback, baton, 0)) {
+         char error[DBX_ERROR_SIZE];
+         T_STRCPY(error, _dbxso(error), pcon->error);
+         c->dbx_destroy_baton(baton, pcon);
+         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+      }
+      return;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      rc = pcon->p_ydb_so->p_ydb_lock_decr_s(&(pcon->args[0].svalue), pcon->cargc - 1, &pcon->yargs[0]);
+      if (rc == YDB_OK)
+         retval = 1;
+      else
+         retval = 0;
+   }
+   else {
+      int locktype;
+      locktype = CACHE_INCREMENTAL_LOCK;
+      rc =  pcon->p_isc_so->p_CacheReleaseLock(pcon->cargc - 1, locktype);
+      if (rc == CACHE_SUCCESS)
+         retval = 1;
+      else
+         retval = 0;
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      dbx_create_string(&(pcon->output_val.svalue), (void *) &retval, DBX_TYPE_INT);
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+   DBX_DBFUN_END(c);
+   DBX_DB_UNLOCK(rc);
+
+   result = c->dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -738,10 +979,37 @@ void mglobal::Close(const FunctionCallbackInfo<Value>& args)
    }
    gx->pkey = NULL;
 /*
-   cx->delete_class_template(gx);
+   cx->delete_mglobal_template(gx);
 */
    return;
 }
 
+int dbx_escape_output(DBXSTR *pdata, char *item, int item_len, short context)
+{
+   int n;
 
+   if (context == 0) {
+      for (n = 0; n < item_len; n ++) {
+         pdata->buf_addr[pdata->len_used ++] = item[n];
+      }
+      return pdata->len_used;
+   }
+
+   for (n = 0; n < item_len; n ++) {
+      if (item[n] == '&') {
+         pdata->buf_addr[pdata->len_used ++] = '%';
+         pdata->buf_addr[pdata->len_used ++] = '2';
+         pdata->buf_addr[pdata->len_used ++] = '6';
+      }
+      else if (item[n] == '=') {
+         pdata->buf_addr[pdata->len_used ++] = '%';
+         pdata->buf_addr[pdata->len_used ++] = '3';
+         pdata->buf_addr[pdata->len_used ++] = 'D';
+      }
+      else {
+         pdata->buf_addr[pdata->len_used ++] = item[n];
+      }
+   }
+   return pdata->len_used;
+}
 

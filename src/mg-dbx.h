@@ -32,8 +32,8 @@
 #define DBX_NODE_VERSION         (NODE_MAJOR_VERSION * 10000) + (NODE_MINOR_VERSION * 100) + NODE_PATCH_VERSION
 
 #define DBX_VERSION_MAJOR        "1"
-#define DBX_VERSION_MINOR        "0"
-#define DBX_VERSION_BUILD        "4"
+#define DBX_VERSION_MINOR        "1"
+#define DBX_VERSION_BUILD        "5"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -239,7 +239,7 @@
 #define DBX_NODE_SET_PROTOTYPE_METHOD(a, b)    dbx_set_prototype_method(t, b, a, a);
 #define DBX_NODE_SET_PROTOTYPE_METHODC(a, b)   dbx_set_prototype_method(tpl, b, a, a);
 
-#if DBX_NODE_VERSION >= 120000
+#if DBX_NODE_VERSION >= 100000
 
 #define DBX_GET_ISOLATE \
    if (c->isolate == NULL) { \
@@ -281,10 +281,10 @@
 
 #if DBX_NODE_VERSION >= 120000
 
-#define DBX_DBFUN_START(C, PCFUN) \
+#define DBX_DBFUN_START(C, PCON) \
    if (!C->open) { \
-      if (PCFUN && PCFUN->error[0]) { \
-         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, PCFUN->error, NewStringType::kNormal).ToLocalChecked())); \
+      if (PCON && PCON->error[0]) { \
+         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, PCON->error, NewStringType::kNormal).ToLocalChecked())); \
          return; \
       } \
       else { \
@@ -295,10 +295,10 @@
 
 #else
 
-#define DBX_DBFUN_START(C, PCFUN) \
+#define DBX_DBFUN_START(C, PCON) \
    if (!C->open) { \
-      if (PCFUN && PCFUN->error[0]) { \
-         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, PCFUN->error))); \
+      if (PCON && PCON->error[0]) { \
+         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, PCON->error))); \
          return; \
       } \
       else { \
@@ -311,8 +311,10 @@
 
 #if DBX_NODE_VERSION >= 120000
 #define DBX_GET(a,b)                a->Get(icontext,b).ToLocalChecked()
+#define DBX_SET(a,b,c)              a->Set(icontext,b,c).FromJust()
 #define DBX_TO_OBJECT(a)            a->ToObject(icontext).ToLocalChecked()
 #define DBX_TO_STRING(a)            a->ToString(icontext).ToLocalChecked()
+#define DBX_TO_BOOLEAN(a)           a->ToBoolean(isolate)
 #define DBX_NUMBER_VALUE(a)         a->NumberValue(icontext).ToChecked()
 #define DBX_INT32_VALUE(a)          a->Int32Value(icontext).FromJust()
 #define DBX_WRITE_UTF8(a,b)         a->WriteUtf8(isolate, b)
@@ -320,10 +322,25 @@
 #define DBX_WRITE_ONE_BYTE(a,b)     a->WriteOneByte(isolate, b)
 #define DBX_UTF8_LENGTH(a)          a->Utf8Length(isolate)
 #define DBX_LENGTH(a)               a->Length()
+#elif DBX_NODE_VERSION >= 100000
+#define DBX_GET(a,b)                a->Get(icontext,b).ToLocalChecked()
+#define DBX_SET(a,b,c)              a->Set(icontext,b,c).FromJust()
+#define DBX_TO_OBJECT(a)            a->ToObject(icontext).ToLocalChecked()
+#define DBX_TO_STRING(a)            a->ToString(icontext).ToLocalChecked()
+#define DBX_TO_BOOLEAN(a)           a->ToBoolean(icontext).ToLocalChecked()
+#define DBX_NUMBER_VALUE(a)         a->NumberValue(icontext).ToChecked()
+#define DBX_INT32_VALUE(a)          a->Int32Value(icontext).FromJust()
+#define DBX_WRITE_UTF8(a,b)         a->WriteUtf8(b)
+#define DBX_WRITE(a,b)              a->Write((uint16_t *) b)
+#define DBX_WRITE_ONE_BYTE(a,b)     a->WriteOneByte(b)
+#define DBX_UTF8_LENGTH(a)          a->Utf8Length()
+#define DBX_LENGTH(a)               a->Length()
 #else
 #define DBX_GET(a,b)                a->Get(b)
+#define DBX_SET(a,b,c)              a->Set(b,c)
 #define DBX_TO_OBJECT(a)            a->ToObject()
 #define DBX_TO_STRING(a)            a->ToString()
+#define DBX_TO_BOOLEAN(a)           a->ToBoolean()
 #define DBX_NUMBER_VALUE(a)         a->NumberValue()
 #define DBX_INT32_VALUE(a)          a->Int32Value()
 #define DBX_WRITE_UTF8(a,b)         a->WriteUtf8(b)
@@ -332,6 +349,14 @@
 #define DBX_UTF8_LENGTH(a)          a->Utf8Length()
 #define DBX_LENGTH(a)               a->Length()
 #endif
+
+#define DBX_INTEGER_NEW(a)          Integer::New(isolate, a)
+#define DBX_OBJECT_NEW()            Object::New(isolate)
+#define DBX_ARRAY_NEW(a)            Array::New(isolate, a)
+#define DBX_ARRAY_NEW(a)            Array::New(isolate, a)
+#define DBX_NUMBER_NEW(a)           Number::New(isolate, a)
+#define DBX_BOOLEAN_NEW(a)          Boolean::New(isolate, a)
+#define DBX_NULL()                  Null(isolate)
 
 #define DBX_CALLBACK_FUN(JSNARG, CB, ASYNC) \
    JSNARG = args.Length(); \
@@ -444,6 +469,10 @@ typedef struct {
 #define CACHE_TTNEVER   8
 #define CACHE_PROGMODE  32
 
+#define CACHE_INCREMENTAL_LOCK   1
+#define CACHE_SHARED_LOCK        2
+#define CACHE_IMMEDIATE_RELEASE  4
+
 #define CACHE_INT	      1
 #define CACHE_DOUBLE	   2
 #define CACHE_ASTRING   3
@@ -513,7 +542,15 @@ typedef struct {
 
 /* YottaDB */
 
+#define YDB_OK       0
 #define YDB_DEL_TREE 1
+
+#define YDB_INT_MAX        ((int)0x7fffffff)
+#define YDB_TP_RESTART     (YDB_INT_MAX - 1)
+#define YDB_TP_ROLLBACK    (YDB_INT_MAX - 2)
+#define YDB_NODE_END       (YDB_INT_MAX - 3)
+#define YDB_LOCK_TIMEOUT   (YDB_INT_MAX - 4)
+#define YDB_NOTOK          (YDB_INT_MAX - 5)
 
 typedef struct {
    unsigned int   len_alloc;
@@ -689,6 +726,9 @@ typedef struct tagDBXYDBSO {
    int               (* p_ydb_incr_s)                    (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, ydb_buffer_t *increment, ydb_buffer_t *ret_value);
    int               (* p_ydb_ci)                        (const char *c_rtn_name, ...);
    int               (* p_ydb_cip)                       (ci_name_descriptor *ci_info, ...);
+   int               (* p_ydb_lock_incr_s)               (unsigned long long timeout_nsec, ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray);
+   int               (* p_ydb_lock_decr_s)               (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray);
+
 } DBXYDBSO, *PDBXYDBSO;
 
 
@@ -697,6 +737,8 @@ typedef struct tagDBXCON {
    short          utf8;
    short          use_mutex;
    short          done;
+   short          lock;
+   short          increment;
    char           type[64];
    char           path[256];
    char           username[64];
@@ -722,9 +764,18 @@ typedef struct tagDBXCON {
 
    int            (* p_dbxfun) (struct tagDBXCON * pcon);
 
-   v8::Isolate    *isolate;
-
 } DBXCON, *PDBXCON;
+
+
+typedef struct tagDBXQR {
+   ydb_buffer_t   global_name;
+   unsigned int   kbuffer_size;
+   unsigned int   kbuffer_used;
+   unsigned char *kbuffer;
+   int            keyn;
+   ydb_buffer_t   key[DBX_MAXARGS];
+   DBXVAL         data;
+} DBXQR, *PDBXQR;
 
 
 struct dbx_pool_task {
@@ -747,16 +798,17 @@ private:
 
 public:
 
+   int            counter;
    short          open;
    short          use_mutex;
    short          handle_sigint;
    short          handle_sigterm;
    int            utf8;
    unsigned long  pid;
-   DBXMUTEX       mutex;
-   DBXCON *pcon;
-   DBXCON con;
-   DBXZV zv;
+   DBXMUTEX *     p_mutex;
+   DBXCON *       pcon;
+   DBXCON         con;
+   DBXZV          zv;
    DBXDEBUG       debug;
 
    v8::Isolate             *isolate;
@@ -813,9 +865,14 @@ public:
    static void                   Delete(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Next(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Previous(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   Increment(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   Lock(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   Unlock(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Sleep(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   MGlobal(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   MGlobal_Close(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   MGlobalQuery(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   MGlobalQuery_Close(const v8::FunctionCallbackInfo<v8::Value>& args);
    static int                    ExtFunctionReference(DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXCON *pcon, DBXFREF *pfref, DBXFUN *pfun, short context);
    static void                   ExtFunction(const v8::FunctionCallbackInfo<v8::Value>& args);
 
@@ -856,8 +913,14 @@ int                     dbx_defined                (DBXCON *pcon);
 int                     dbx_delete                 (DBXCON *pcon);
 int                     dbx_next                   (DBXCON *pcon);
 int                     dbx_previous               (DBXCON *pcon);
+int                     dbx_increment              (DBXCON *pcon);
+int                     dbx_lock                   (DBXCON *pcon);
+int                     dbx_unlock                 (DBXCON *pcon);
 int                     dbx_function_reference     (DBXCON *pcon, DBXFUN *pfun);
 int                     dbx_function               (DBXCON *pcon);
+int                     dbx_global_order           (DBXCON *pcon, DBXQR *pqr_prev, short dir, short getdata);
+int                     dbx_global_query           (DBXCON *pcon, DBXQR *pqr_next, DBXQR *pqr_prev, short dir, short getdata);
+int                     dbx_parse_global_reference (DBXCON *pcon, DBXQR *pqr, char *global_ref, int global_ref_len);
 
 int                     dbx_launch_thread          (DBXCON *pcon);
 #if defined(_WIN32)
@@ -875,6 +938,8 @@ int                     dbx_pool_submit_task       (DBXCON *pcon);
 void *                  dbx_realloc                (void *p, int curr_size, int new_size, short id);
 void *                  dbx_malloc                 (int size, short id);
 int                     dbx_free                   (void *p, short id);
+DBXQR *                 dbx_alloc_dbxqr            (DBXQR *pqr, int dsize, short context);
+int                     dbx_free_dbxqr             (DBXQR *pqr);
 int                     dbx_ucase                  (char *string);
 int                     dbx_lcase                  (char *string);
 
@@ -882,7 +947,7 @@ int                     dbx_create_string          (DBXSTR *pstr, void *data, sh
 
 int                     dbx_buffer_dump            (DBXCON *pcon, void *buffer, unsigned int len, char *title, unsigned char csize, short mode);
 int                     dbx_log_event              (DBXDEBUG *p_debug, char *message, char *title, int level);
-int                     dbx_pause                  (int msecs);
+int                     dbx_sleep                  (int msecs);
 int                     dbx_test_file_access       (char *file, int mode);
 DBXPLIB                 dbx_dso_load               (char * library);
 DBXPROC                 dbx_dso_sym                (DBXPLIB p_library, char * symbol);
@@ -891,7 +956,7 @@ DBXTHID                 dbx_current_thread_id      (void);
 unsigned long           dbx_current_process_id     (void);
 int                     dbx_error_message          (DBXCON *pcon, int error_code);
 
-int                     dbx_mutex_creat            (DBXMUTEX *p_mutex);
+int                     dbx_mutex_create           (DBXMUTEX *p_mutex);
 int                     dbx_mutex_lock             (DBXMUTEX *p_mutex, int timeout);
 int                     dbx_mutex_unlock           (DBXMUTEX *p_mutex);
 int                     dbx_mutex_destroy          (DBXMUTEX *p_mutex);
