@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to M-like databases from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-7 September 2019, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+4 October 2019, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v4 to v12.
 * [Release Notes](#RelNotes) can be found at the end of this document.
@@ -51,7 +51,7 @@ Most **mg-dbx** methods are capable of operating either synchronously or asynchr
 
 The first step is to add **mg-dbx** to your Node.js script
 
-       var dbx = require('mg-dbx');
+       var dbx = require('mg-dbx').dbx;
 
 ### Create a Server Object
 
@@ -105,6 +105,9 @@ Assuming an 'out of the box' YottaDB installation under **/usr/local/lib/yottadb
                env_vars: envvars
              });
 
+#### Additional (optional) properties for the open() method
+
+* **multithreaded**: A boolean value to be set to 'true' or 'false' (default **multithreaded: false**).  Set this property to 'true' if the application uses multithreaded techniques in JavaScript (e.g. V8 worker threads).
 
 ### Invocation of database commands
 
@@ -224,6 +227,69 @@ Example:
        customer_orders.reset("Customer", 2, "orders");
        do_work ...
 
+### Cursor based data retrieval
+
+This facility provides high-performance techniques for traversing records held in database globals. 
+
+#### Specifying the query
+
+The first task is to specify the 'query' for the global traverse.
+
+       query = db.mglobalquery({global: <global_name>, key: [<seed_key>]}[, <options>]);
+
+The 'options' object can contain the following properties:
+
+* **multilevel**: A boolean value (default: **multilevel: false**). Set to 'true' to return all descendant nodes from the specified 'seed_key'.
+* **getdata**: A boolean value (default: **getdata: false**). Set to 'true' to return any data values associated with each global node returned.
+* **format**: Format for output (default: not specified). If the output consists of multiple data elements, the return value (by default) is a JavaScript object made up of a 'key' array and an associated 'data' value.  Set to "url" to return such data as a single URL escaped string including all key values ('key[1->n]') and any associated 'data' value.
+
+Example (return all keys and names from the 'Person' global):
+
+       query = db.mglobalquery({global: "Person", key: [""]}, {multilevel: false, getdata: true});
+
+#### Traversing the dataset
+
+In Key Order:
+
+       result = query.next();
+
+In Reverse Key Order:
+
+       result = query.previous();
+
+In all cases these methods will return 'null' when the end of the dataset is reached.
+
+Example 1 (return all key values from the 'Person' global - returns a simple variable):
+
+       query = db.mglobalquery({global: "Person", key: [""]});
+       while ((result = query.next()) !== null) {
+          console.log("result: " + result);
+       }
+
+Example 2 (return all key values and names from the 'Person' global - returns an object):
+
+       query = db.mglobalquery({global: "Person", key: [""]}, multilevel: false, getdata: true);
+       while ((result = query.next()) !== null) {
+          console.log("result: " + JSON.stringify(result, null, '\t'));
+       }
+
+
+Example 3 (return all key values and names from the 'Person' global - returns a string):
+
+       query = db.mglobalquery({global: "Person", key: [""]}, multilevel: false, getdata: true, format: "url"});
+       while ((result = query.next()) !== null) {
+          console.log("result: " + result);
+       }
+
+Example 4 (return all key values and names from the 'Person' global, including any descendant nodes):
+
+       query = db.mglobalquery({global: "Person", key: [""]}, {{multilevel: true, getdata: true});
+       while ((result = query.next()) !== null) {
+          console.log("result: " + result);
+       }
+
+* M programmers will recognise this last example as the M **$Query()** command.
+ 
 
 ### Invocation of database functions
 
@@ -287,4 +353,9 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 * Allow a global to be registered with a fixed leading key (i.e. leading fixed subscripts).
 * Introduce a method to reset a global name (and any associated fixed keys).
+
+### v1.1.5 (4 October 2019)
+
+* Introduce cursor based data retrieval.
+* Introduce outline support for multithreading in JavaScript - **currently not stable!**.
 
