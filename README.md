@@ -227,6 +227,54 @@ Example:
        customer_orders.reset("Customer", 2, "orders");
        do_work ...
 
+
+#### Increment the value of a global node
+
+Synchronous:
+
+       var result = <global>.increment(<key>, <increment_value>);
+
+Asynchronous:
+
+       <global>.increment(<key>, <increment_value>, callback(<error>, <result>));
+      
+Example (increment the value of the "counter" node by 1.5 and return the new value):
+
+       var result = person.increment("counter", 1.5);
+
+
+#### Lock a global node
+
+Synchronous:
+
+       var result = <global>.lock(<key>, <timeout>);
+
+Asynchronous:
+
+       <global>.lock(<key>, <timeout>, callback(<error>, <result>));
+      
+Example (lock global node '1' with a timeout of 30 seconds):
+
+       var result = person.lock(1, 30);
+
+* Note: Specify the timeout value as '-1' for no timeout (i.e. wait until the global node becomes available to lock).
+
+
+#### Unlock a (previously locked) global node
+
+Synchronous:
+
+       var result = <global>.unlock(<key>);
+
+Asynchronous:
+
+       <global>.unlock(<key>, callback(<error>, <result>));
+      
+Example (unlock global node '1'):
+
+       var result = person.unlock(1);
+
+ 
 ### Cursor based data retrieval
 
 This facility provides high-performance techniques for traversing records held in database globals. 
@@ -356,6 +404,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 ### v1.1.5 (4 October 2019)
 
+* Introduce global 'increment()' and 'lock(); methods.
 * Introduce cursor based data retrieval.
 * Introduce outline support for multithreading in JavaScript - **currently not stable!**.
 
