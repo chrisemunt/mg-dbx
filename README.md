@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to M-like databases from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-4 October 2019, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+10 October 2019, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v4 to v12.
 * [Release Notes](#RelNotes) can be found at the end of this document.
@@ -109,11 +109,29 @@ Assuming an 'out of the box' YottaDB installation under **/usr/local/lib/yottadb
 
 * **multithreaded**: A boolean value to be set to 'true' or 'false' (default **multithreaded: false**).  Set this property to 'true' if the application uses multithreaded techniques in JavaScript (e.g. V8 worker threads).
 
+
+#### Returning (and optionally changing) the current directory (or Namespace)
+
+       current_namespace = db.namespace([<new_namespace>]);
+
+Example 1 (Get the current Namespace): 
+
+       var nspace = db.namespace();
+
+* Note this will return the current Namespace for InterSystems databases and the value of the current global directory for YottaDB (i.e. $ZG).
+
+Example 2 (Change the current Namespace): 
+
+       var new_nspace = db.namespace("SAMPLES");
+
+* If the operation is successful this method will echo back the new Namespace name.  If not successful, the method will return the name of the current (unchanged) Namespace.
+
+ 
 ### Invocation of database commands
 
 #### Register a global name (and fixed key)
 
-       global := db.mglobal(<global_name>[, <fixed_key>])
+       global = db.mglobal(<global_name>[, <fixed_key>]);
 
 Example (using a global named "Person"):
 
@@ -213,21 +231,6 @@ Example:
        }
 
 
-#### Reset a global name (and fixed key)
-
-       <global>.reset(<global_name>[, <fixed_key>]);
-
-Example:
-
-       // Process orders for customer #1
-       customer_orders = db.mglobal("Customer", 1, "orders")
-       do_work ...
-
-       // Process orders for customer #2
-       customer_orders.reset("Customer", 2, "orders");
-       do_work ...
-
-
 #### Increment the value of a global node
 
 Synchronous:
@@ -274,6 +277,21 @@ Example (unlock global node '1'):
 
        var result = person.unlock(1);
 
+
+#### Reset a global name (and fixed key)
+
+       <global>.reset(<global_name>[, <fixed_key>]);
+
+Example:
+
+       // Process orders for customer #1
+       customer_orders = db.mglobal("Customer", 1, "orders")
+       do_work ...
+
+       // Process orders for customer #2
+       customer_orders.reset("Customer", 2, "orders");
+       do_work ...
+
  
 ### Cursor based data retrieval
 
@@ -288,7 +306,9 @@ The first task is to specify the 'query' for the global traverse.
 The 'options' object can contain the following properties:
 
 * **multilevel**: A boolean value (default: **multilevel: false**). Set to 'true' to return all descendant nodes from the specified 'seed_key'.
+
 * **getdata**: A boolean value (default: **getdata: false**). Set to 'true' to return any data values associated with each global node returned.
+
 * **format**: Format for output (default: not specified). If the output consists of multiple data elements, the return value (by default) is a JavaScript object made up of a 'key' array and an associated 'data' value.  Set to "url" to return such data as a single URL escaped string including all key values ('key[1->n]') and any associated 'data' value.
 
 Example (return all keys and names from the 'Person' global):
@@ -333,11 +353,23 @@ Example 4 (return all key values and names from the 'Person' global, including a
 
        query = db.mglobalquery({global: "Person", key: [""]}, {{multilevel: true, getdata: true});
        while ((result = query.next()) !== null) {
-          console.log("result: " + result);
+          console.log("result: " + JSON.stringify(result, null, '\t'));
        }
 
 * M programmers will recognise this last example as the M **$Query()** command.
  
+
+#### Traversing the global directory (return a list of global names)
+
+       query = db.mglobalquery({global: <seed_global_name>}, {globaldirectory: true});
+
+Example (return all global names held in the current directory)
+
+       query = db.mglobalquery({global: ""}, {globaldirectory: true});
+       while ((result = query.next()) !== null) {
+          console.log("result: " + result);
+       }
+
 
 ### Invocation of database functions
 
@@ -359,6 +391,81 @@ M routine called 'math':
 JavaScript invocation:
 
       result = db.function("add^math", 2, 3);
+
+
+### Direct access to InterSystems classes (IRIS and Cache)
+
+#### Invocation of a ClassMethod
+
+Synchronous:
+
+       result = db.classmethod(<class_name>, <classmethod_name>, <parameters>);
+
+Asynchronous:
+
+       db.function(<class_name>, <classmethod_name>, <parameters>, callback(<error>, <result>));
+      
+Example (Encode a date to internal storage format):
+
+       result = db.classmethod("%Library.Date", "DisplayToLogical", "10/10/2019");
+
+#### Creating and manipulating instances of objects
+
+The following simple class will be used to illustrate this facility.
+
+       Class User.Person Extends %Persistent
+       {
+          Property Number As %Integer;
+          Property Name As %String;
+          Property DateOfBirth As %Date;
+          Method Age(AtDate As %Integer) As %Integer
+          {
+             Quit (AtDate - ..DateOfBirth) \ 365.25
+          }
+       }
+
+#### Create an entry for a new Person
+
+       person = db.classmethod("User.Person", "%New");
+
+Add Data:
+
+       result = person.setproperty("Number", 1);
+       result = person.setproperty("Name", "John Smith");
+       result = person.setproperty("DateOfBirth", "12/8/1995");
+
+Save the object record:
+
+       result = person.method("%Save");
+
+#### Retrieve an entry for an existing Person
+
+Retrieve data for object %Id of 1.
+ 
+       person = db.classmethod("User.Person", "%OpenId", 1);
+
+Return properties:
+
+       var number = person.getproperty("Number");
+       var name = person.getproperty("Name");
+       var dob = person.getproperty("DateOfBirth");
+
+Calculate person's age at a particular date:
+
+       today = db.classmethod("%Library.Date", "DisplayToLogical", "10/10/2019");
+       var age = person.method("Age", today);
+
+#### Reusing an object container
+
+Once created, it is possible to reuse containers holding previously instantiated objects using the **reset()** method.  Using this technique helps to reduce memory usage in the Node.js environment.
+
+Example 1 Reset a container to hold a new instance:
+
+       person.reset("User.Person", "%New");
+
+Example 2 Reset a container to hold an existing instance (object %Id of 2):
+
+       person.reset("User.Person", "%OpenId", 2);
 
 
 ### Return the version of mg-dbx
@@ -407,4 +514,12 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Introduce global 'increment()' and 'lock(); methods.
 * Introduce cursor based data retrieval.
 * Introduce outline support for multithreading in JavaScript - **currently not stable!**.
+
+### v1.2.6 (10 October 2019)
+
+* Introduce support for direct access to InterSystems IRIS/Cache classes.
+* Extend cursor based data retrieval to include an option for generating a global directory listing.
+* Introduce a method to report and (optionally change) the current working global directory (or Namespace).
+* Correct a fault that led to the timeout occasionally not being honoured in the **lock()** method.
+* Correct a fault that led to Node.js exceptions not being processed correctly.
 
