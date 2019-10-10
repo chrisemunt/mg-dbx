@@ -24,24 +24,18 @@
    ----------------------------------------------------------------------------
 */
 
-#ifndef MG_CURSOR_H
-#define MG_CURSOR_H
+#ifndef MG_CLASS_H
+#define MG_CLASS_H
 
-class mcursor : public node::ObjectWrap
+class mclass : public node::ObjectWrap
 {
    public:
 
    short          open;
    short          context;
-   short          getdata;
-   short          multilevel;
-   short          format;
-   int            counter;
-   char           global_name[256];
-   DBXQR          *pqr_prev;
-   DBXQR          *pqr_next;
+   int            oref;
+   char           class_name[256];
    DBXCON         *pcon;
-   DBXSTR         data;
    int            m_count;
    DBX_DBNAME     *c;
 
@@ -58,30 +52,29 @@ class mcursor : public node::ObjectWrap
    static void dbx_set_prototype_method(v8::Handle<v8::FunctionTemplate> t, v8::FunctionCallback callback, const char* name, const char* data);
 #endif
 
-   static mcursor * NewInstance(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static mclass * NewInstance(const v8::FunctionCallbackInfo<v8::Value>& args);
 
-   static int delete_mcursor_template(mcursor *cx);
+   static int delete_mclass_template(mclass *cx);
 
-   static void Next(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Previous(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void ClassMethod(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void Method(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void SetProperty(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void GetProperty(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void Reset(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void Close(const v8::FunctionCallbackInfo<v8::Value>& args);
 
    inline double value() const { return value_; }
 
-   explicit mcursor(double value = 0);
-   ~mcursor();
+   explicit mclass(double value = 0);
+   ~mclass();
 
    private:
 
    static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
    static v8::Persistent<v8::Function> constructor;
 
-
    double value_;
 };
-
-int dbx_escape_output(DBXSTR *pdata, char *item, int item_len, short context);
 
 #endif
 

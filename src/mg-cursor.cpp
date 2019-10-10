@@ -209,9 +209,11 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
    if (cx->context == 1) {
       if (pcon->argc >= DBX_MAXARGS) {
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
+         return;
       }
       if (async) {
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
+         return;
       }
    
       if (cx->pqr_prev->keyn < 1) {
@@ -231,6 +233,17 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
          args.GetReturnValue().Set(DBX_NULL());
       }
       else if (cx->getdata == 0) {
+/*
+         if (cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used && cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used < 10) {
+            int n;
+            char buffer[32];
+            strncpy(buffer, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used);
+            buffer[cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used] = '\0';
+            n = (int) strtol(buffer, NULL, 10);
+            args.GetReturnValue().Set(DBX_INTEGER_NEW(n));
+            return;
+         }
+*/
          key = c->dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, c->utf8);
          args.GetReturnValue().Set(key);
       }
@@ -258,9 +271,11 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
    else if (cx->context == 2) {
       if (pcon->argc >= DBX_MAXARGS) {
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
+         return;
       }
       if (async) {
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
+         return;
       }
    
       DBX_DBFUN_START(c, pcon);
@@ -321,6 +336,28 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
       }
       return;
    }
+   else if (cx->context == 9) {
+      if (pcon->argc >= DBX_MAXARGS) {
+         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
+         return;
+      }
+      if (async) {
+         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
+         return;
+      }
+   
+      eod = dbx_global_directory(pcon, cx->pqr_prev, 1, &(cx->counter));
+
+      if (eod) {
+         args.GetReturnValue().Set(DBX_NULL());
+      }
+      else {
+         key = c->dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, c->utf8);
+         args.GetReturnValue().Set(key);
+      }
+      return;
+   }
+
 }
 
 
@@ -344,9 +381,11 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
    if (cx->context == 1) {
       if (pcon->argc >= DBX_MAXARGS) {
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
+         return;
       }
       if (async) {
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
+         return;
       }
    
       if (cx->pqr_prev->keyn < 1) {
@@ -393,9 +432,11 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
    else if (cx->context == 2) {
       if (pcon->argc >= DBX_MAXARGS) {
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Previous", 1)));
+         return;
       }
       if (async) {
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
+         return;
       }
    
       DBX_DBFUN_START(c, pcon);
@@ -458,6 +499,27 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
       }
       return;
    }
+   else if (cx->context == 9) {
+      if (pcon->argc >= DBX_MAXARGS) {
+         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
+         return;
+      }
+      if (async) {
+         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
+         return;
+      }
+   
+      eod = dbx_global_directory(pcon, cx->pqr_prev, -1, &(cx->counter));
+
+      if (eod) {
+         args.GetReturnValue().Set(DBX_NULL());
+      }
+      else {
+         key = c->dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, c->utf8);
+         args.GetReturnValue().Set(key);
+      }
+      return;
+   }
 }
 
 
@@ -479,6 +541,7 @@ void mcursor::Reset(const FunctionCallbackInfo<Value>& args)
 
    if (pcon->argc < 1) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "The mglobalquery.reset() method takes at least one argument (the global reference to start with)", 1)));
+      return;
    }
 
    obj = DBX_TO_OBJECT(args[0]);
@@ -488,10 +551,12 @@ void mcursor::Reset(const FunctionCallbackInfo<Value>& args)
    }
    else {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Missing global name in the global object", 1)));
+      return;
    }
  
    if (global_name[0] == '\0') {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "The mglobalquery.reset() method takes at least one argument (the global name)", 1)));
+      return;
    }
 
    if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
@@ -530,6 +595,7 @@ void mcursor::Reset(const FunctionCallbackInfo<Value>& args)
    }
 
    cx->context = 1;
+   cx->counter = 0;
    cx->getdata = 0;
    cx->multilevel = 0;
    cx->format = 0;
@@ -545,6 +611,12 @@ void mcursor::Reset(const FunctionCallbackInfo<Value>& args)
       if (DBX_GET(obj, key)->IsBoolean()) {
          if (DBX_TO_BOOLEAN(DBX_GET(obj, key))->IsTrue()) {
             cx->context = 2;
+         }
+      }
+      key = c->dbx_new_string8(isolate, (char *) "globaldirectory", 1);
+      if (DBX_GET(obj, key)->IsBoolean()) {
+         if (DBX_TO_BOOLEAN(DBX_GET(obj, key))->IsTrue()) {
+            cx->context = 9;
          }
       }
       key = c->dbx_new_string8(isolate, (char *) "format", 1);
@@ -576,9 +648,11 @@ void mcursor::Close(const FunctionCallbackInfo<Value>& args)
 
    if (pcon->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments", 1)));
+      return;
    }
    if (pcon->argc > 0) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Closing a globalquery template does not take any arguments", 1)));
+      return;
    }
 
    if (cx->pqr_next) {

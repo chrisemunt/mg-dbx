@@ -32,8 +32,8 @@
 #define DBX_NODE_VERSION         (NODE_MAJOR_VERSION * 10000) + (NODE_MINOR_VERSION * 100) + NODE_PATCH_VERSION
 
 #define DBX_VERSION_MAJOR        "1"
-#define DBX_VERSION_MINOR        "1"
-#define DBX_VERSION_BUILD        "5"
+#define DBX_VERSION_MINOR        "2"
+#define DBX_VERSION_BUILD        "6"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -613,6 +613,11 @@ typedef struct tagDBXFREF {
    char *         function;
 } DBXFREF, *PDBXFREF;
 
+typedef struct tagDBXCREF {
+   short          optype;
+   char *         class_name;
+   int            oref;
+} DBXCREF, *PDBXCREF;
 
 #define DBX_DBTYPE_CACHE     1
 #define DBX_DBTYPE_IRIS      2
@@ -858,6 +863,7 @@ public:
    static void                   Version(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Open(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Close(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   Namespace(const v8::FunctionCallbackInfo<v8::Value>& args);
    static int                    GlobalReference(DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXCON *pcon, DBXGREF *pgref, short context);
    static void                   Get(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Set(const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -875,6 +881,9 @@ public:
    static void                   MGlobalQuery_Close(const v8::FunctionCallbackInfo<v8::Value>& args);
    static int                    ExtFunctionReference(DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXCON *pcon, DBXFREF *pfref, DBXFUN *pfun, short context);
    static void                   ExtFunction(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static int                    ClassReference(DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXCON *pcon, DBXCREF *pcref, short context);
+   static void                   ClassMethod(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   ClassMethod_Close(const v8::FunctionCallbackInfo<v8::Value>& args);
 
    static void                   Benchmark(const v8::FunctionCallbackInfo<v8::Value>& args);
 
@@ -887,6 +896,7 @@ int                     isc_open                   (DBXCON *pcon);
 
 int                     isc_parse_zv               (char *zv, DBXZV * p_sv);
 int                     isc_change_namespace       (DBXCON *pcon, char *nspace);
+int                     isc_get_namespace          (DBXCON *pcon, char *nspace, int nspace_len);
 int                     isc_cleanup                (DBXCON *pcon);
 int                     isc_pop_value              (DBXCON *pcon, DBXVAL *value, int required_type);
 char *                  isc_callin_message         (DBXCON *pcon, int error_code);
@@ -897,6 +907,8 @@ int                     isc_error                  (DBXCON *pcon, int error_code
 int                     ydb_load_library           (DBXCON *pcon);
 int                     ydb_open                   (DBXCON *pcon);
 int                     ydb_parse_zv               (char *zv, DBXZV * p_isc_sv);
+int                     ydb_change_namespace       (DBXCON *pcon, char *nspace);
+int                     ydb_get_namespace          (DBXCON *pcon, char *nspace, int nspace_len);
 int                     ydb_error_message          (DBXCON *pcon, int error_code);
 int                     ydb_function               (DBXCON *pcon, DBXFUN *pfun);
 
@@ -904,6 +916,7 @@ int                     dbx_version                (DBXCON *pcon);
 int                     dbx_open                   (DBXCON *pcon);
 int                     dbx_do_nothing             (DBXCON *pcon);
 int                     dbx_close                  (DBXCON *pcon);
+int                     dbx_namespace              (DBXCON *pcon);
 int                     dbx_reference              (DBXCON *pcon, int n);
 int                     dbx_global_reference       (DBXCON *pcon);
 
@@ -918,6 +931,13 @@ int                     dbx_lock                   (DBXCON *pcon);
 int                     dbx_unlock                 (DBXCON *pcon);
 int                     dbx_function_reference     (DBXCON *pcon, DBXFUN *pfun);
 int                     dbx_function               (DBXCON *pcon);
+int                     dbx_class_reference        (DBXCON *pcon, int optype);
+int                     dbx_classmethod            (DBXCON *pcon);
+int                     dbx_method                 (DBXCON *pcon);
+int                     dbx_setproperty            (DBXCON *pcon);
+int                     dbx_getproperty            (DBXCON *pcon);
+
+int                     dbx_global_directory       (DBXCON *pcon, DBXQR *pqr_prev, short dir, int *counter);
 int                     dbx_global_order           (DBXCON *pcon, DBXQR *pqr_prev, short dir, short getdata);
 int                     dbx_global_query           (DBXCON *pcon, DBXQR *pqr_next, DBXQR *pqr_prev, short dir, short getdata);
 int                     dbx_parse_global_reference (DBXCON *pcon, DBXQR *pqr, char *global_ref, int global_ref_len);

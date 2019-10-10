@@ -234,6 +234,7 @@ void mglobal::Get(const FunctionCallbackInfo<Value>& args)
 
    if (pcon->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Get", 1)));
+      return;
    }
    
    DBX_DBFUN_START(c, pcon);
@@ -253,6 +254,7 @@ void mglobal::Get(const FunctionCallbackInfo<Value>& args)
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         return;
       }
       return;
    }
@@ -305,6 +307,7 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
 
    if (pcon->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Set", 1)));
+      return;
    }
    
    DBX_DBFUN_START(c, pcon);
@@ -324,6 +327,7 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         return;
       }
       return;
    }
@@ -373,6 +377,7 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
 
    if (pcon->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Defined", 1)));
+      return;
    }
    
    DBX_DBFUN_START(c, pcon);
@@ -392,6 +397,7 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         return;
       }
       return;
    }
@@ -442,6 +448,7 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
 
    if (pcon->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Delete", 1)));
+      return;
    }
    
    DBX_DBFUN_START(c, pcon);
@@ -461,6 +468,7 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         return;
       }
       return;
    }
@@ -509,6 +517,7 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
 
    if (pcon->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
+      return;
    }
    
    DBX_DBFUN_START(c, pcon);
@@ -528,6 +537,7 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         return;
       }
       return;
    }
@@ -576,6 +586,7 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
 
    if (pcon->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Previous", 1)));
+      return;
    }
    
    DBX_DBFUN_START(c, pcon);
@@ -595,6 +606,7 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         return;
       }
       return;
    }
@@ -644,6 +656,7 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
 
    if (pcon->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Increment", 1)));
+      return;
    }
 
    DBX_DBFUN_START(c, pcon);
@@ -663,6 +676,7 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         return;
       }
       return;
    }
@@ -694,7 +708,9 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
 void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
 {
    short async;
-   int rc, retval;
+   int rc, retval, timeout, locktype;
+   unsigned long long timeout_nsec;
+   char buffer[32];
    DBXCON *pcon;
    Local<String> result;
    DBXGREF gref;
@@ -711,9 +727,11 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
 
    if (pcon->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Lock", 1)));
+      return;
    }
    if (pcon->argc < 1) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Missing or invalid global name on Lock", 1)));
+      return;
    }
 
    DBX_DBFUN_START(c, pcon);
@@ -733,15 +751,20 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         return;
       }
       return;
    }
 
    if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
-      int timeout;
-      unsigned long long timeout_nsec;
-      timeout = (int) strtol(pcon->args[pcon->cargc - 1].svalue.buf_addr, NULL,10);
+      timeout = -1;
+      if (pcon->args[pcon->cargc - 1].svalue.len_used < 16) {
+         strncpy(buffer, pcon->args[pcon->cargc - 1].svalue.buf_addr, pcon->args[pcon->cargc - 1].svalue.len_used);
+         buffer[pcon->args[pcon->cargc - 1].svalue.len_used] = '\0';
+         timeout = (int) strtol(buffer, NULL, 10);
+      }
       timeout_nsec = 1000000000;
+
       if (timeout < 0)
          timeout_nsec *= 3600;
       else
@@ -761,9 +784,10 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
       }
    }
    else {
-      int timeout, locktype;
+      strncpy(buffer, pcon->args[pcon->cargc - 1].svalue.buf_addr, pcon->args[pcon->cargc - 1].svalue.len_used);
+      buffer[pcon->args[pcon->cargc - 1].svalue.len_used] = '\0';
+      timeout = (int) strtol(buffer, NULL, 10);
       locktype = CACHE_INCREMENTAL_LOCK;
-      timeout = (int) strtol(pcon->args[pcon->cargc - 1].svalue.buf_addr, NULL, 10);
       rc =  pcon->p_isc_so->p_CacheAcquireLock(pcon->cargc - 2, locktype, timeout, &retval);
    }
 
@@ -802,6 +826,7 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
 
    if (pcon->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Unlock", 1)));
+      return;
    }
 
    DBX_DBFUN_START(c, pcon);
@@ -821,6 +846,7 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
          isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         return;
       }
       return;
    }
@@ -875,11 +901,13 @@ void mglobal::Reset(const FunctionCallbackInfo<Value>& args)
 
    if (pcon->argc < 1) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "The Reset method takes at least one argument (the global name)", 1)));
+      return;
    }
 
    c->dbx_write_char8(isolate, DBX_TO_STRING(args[0]), global_name, pcon->utf8);
    if (global_name[0] == '\0') {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "The Reset method takes at least one argument (the global name)", 1)));
+      return;
    }
 
    pval = gx->pkey;
@@ -966,9 +994,11 @@ void mglobal::Close(const FunctionCallbackInfo<Value>& args)
 
    if (pcon->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments", 1)));
+      return;
    }
    if (pcon->argc > 0) {
       isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Closing a global template does not take any arguments", 1)));
+      return;
    }
 
    pval = gx->pkey;
