@@ -32,8 +32,8 @@
 #define DBX_NODE_VERSION         (NODE_MAJOR_VERSION * 10000) + (NODE_MINOR_VERSION * 100) + NODE_PATCH_VERSION
 
 #define DBX_VERSION_MAJOR        "1"
-#define DBX_VERSION_MINOR        "2"
-#define DBX_VERSION_BUILD        "6"
+#define DBX_VERSION_MINOR        "3"
+#define DBX_VERSION_BUILD        "7"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -152,6 +152,25 @@
 #define DBX_TYPE_NULL            10
 
 #define DBX_XTYPE                21
+
+#define DBX_DSORT_INVALID        0
+#define DBX_DSORT_DATA           1
+#define DBX_DSORT_SUBSCRIPT      2
+#define DBX_DSORT_GLOBAL         3
+#define DBX_DSORT_EOD            9
+#define DBX_DSORT_STATUS         10
+#define DBX_DSORT_ERROR          11
+
+#define DBX_DSORT_ISVALID(a)     ((a == DBX_DSORT_GLOBAL) || (a == DBX_DSORT_SUBSCRIPT) || (a == DBX_DSORT_DATA) || (a == DBX_DSORT_EOD) || (a == DBX_DSORT_STATUS) || (a == DBX_DSORT_ERROR))
+
+#define DBX_DTYPE_NONE           0
+#define DBX_DTYPE_DBXSTR         1
+#define DBX_DTYPE_STR            2
+#define DBX_DTYPE_INT            4
+#define DBX_DTYPE_INT64          5
+#define DBX_DTYPE_DOUBLE         6
+#define DBX_DTYPE_OREF           7
+#define DBX_DTYPE_NULL           10
 
 #if defined(MAX_PATH) && (MAX_PATH>511)
 #define DBX_MAX_PATH             MAX_PATH
@@ -568,7 +587,10 @@ typedef struct {
    void		      *handle;
 } ci_name_descriptor;
 
-typedef ydb_buffer_t DBXSTR;
+typedef ydb_buffer_t    DBXSTR;
+typedef char            ydb_char_t;
+typedef long            ydb_long_t;
+
 
 /* End of YottaDB */
 
@@ -618,6 +640,27 @@ typedef struct tagDBXCREF {
    char *         class_name;
    int            oref;
 } DBXCREF, *PDBXCREF;
+
+#define DBX_SQL_MGSQL      1
+#define DBX_SQL_ISCSQL     2
+#define DBX_SQL_MAXCOL     128
+
+typedef struct tagDBXSQLCOL {
+   short          type;
+   ydb_buffer_t   name;
+} DBXSQLCOL, *PDBXSQLCOL;
+
+typedef struct tagDBXSQL {
+   short          sql_type;
+   int            sql_no;
+   char *         sql_script;
+   int            sql_script_len;
+   int            sqlcode;
+   char           sqlstate[8];
+   unsigned long  row_no;
+   int            no_cols;
+   DBXSQLCOL *    cols[DBX_SQL_MAXCOL];
+} DBXSQL, *PDBXSQL;
 
 #define DBX_DBTYPE_CACHE     1
 #define DBX_DBTYPE_IRIS      2
@@ -733,6 +776,7 @@ typedef struct tagDBXYDBSO {
    int               (* p_ydb_cip)                       (ci_name_descriptor *ci_info, ...);
    int               (* p_ydb_lock_incr_s)               (unsigned long long timeout_nsec, ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray);
    int               (* p_ydb_lock_decr_s)               (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray);
+   void              (*p_ydb_zstatus)                    (ydb_char_t* msg_buffer, ydb_long_t buf_len);
 
 } DBXYDBSO, *PDBXYDBSO;
 
@@ -761,6 +805,7 @@ typedef struct tagDBXCON {
    DBXVAL         args[DBX_MAXARGS];
    ydb_buffer_t   yargs[DBX_MAXARGS];
    DBXVAL         output_val;
+   DBXSQL         *psql;
    DBXMUTEX       *p_mutex;
    DBXZV          *p_zv;
    DBXDEBUG       *p_debug;
@@ -826,7 +871,8 @@ public:
       DBX_DBNAME *                  c;
       int                           increment_by;
       int                           sleep_for;
-      v8::Local<v8::String>         result;
+      v8::Local<v8::String>         result_str;
+      v8::Local<v8::Object>         result_obj;
       v8::Persistent<v8::Function>  cb;
       DBXCON *                      pcon;
    };
@@ -857,7 +903,7 @@ public:
    static async_rtn              dbx_process_task(uv_work_t *req);
    static async_rtn              dbx_uv_close_callback(uv_work_t *req);
    static async_rtn              dbx_invoke_callback(uv_work_t *req);
-
+   static async_rtn              dbx_invoke_callback_sql_execute(uv_work_t *req);
 
    static void                   About(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Version(const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -884,6 +930,8 @@ public:
    static int                    ClassReference(DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXCON *pcon, DBXCREF *pcref, short context);
    static void                   ClassMethod(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   ClassMethod_Close(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   SQL(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   SQL_Close(const v8::FunctionCallbackInfo<v8::Value>& args);
 
    static void                   Benchmark(const v8::FunctionCallbackInfo<v8::Value>& args);
 
@@ -936,6 +984,9 @@ int                     dbx_classmethod            (DBXCON *pcon);
 int                     dbx_method                 (DBXCON *pcon);
 int                     dbx_setproperty            (DBXCON *pcon);
 int                     dbx_getproperty            (DBXCON *pcon);
+int                     dbx_sql_execute            (DBXCON *pcon);
+int                     dbx_sql_row                (DBXCON *pcon, int rn, int dir);
+int                     dbx_sql_cleanup            (DBXCON *pcon);
 
 int                     dbx_global_directory       (DBXCON *pcon, DBXQR *pqr_prev, short dir, int *counter);
 int                     dbx_global_order           (DBXCON *pcon, DBXQR *pqr_prev, short dir, short getdata);
@@ -955,6 +1006,10 @@ void                    dbx_pool_execute_task      (struct dbx_pool_task *task, 
 void *                  dbx_pool_requests_loop     (void *data);
 int                     dbx_pool_thread_init       (DBXCON *pcon, int num_threads);
 int                     dbx_pool_submit_task       (DBXCON *pcon);
+int                     dbx_add_block_size         (DBXSTR *block, unsigned long offset, unsigned long data_len, int dsort, int dtype);
+unsigned long           dbx_get_block_size         (DBXSTR *block, unsigned long offset, int *dsort, int *dtype);
+int                     dbx_set_size               (unsigned char *str, unsigned long data_len);
+unsigned long           dbx_get_size               (unsigned char *str);
 void *                  dbx_realloc                (void *p, int curr_size, int new_size, short id);
 void *                  dbx_malloc                 (int size, short id);
 int                     dbx_free                   (void *p, short id);

@@ -66,6 +66,8 @@ void mcursor::Init(Handle<Object> target)
 
    /* Prototypes */
 
+   DBX_NODE_SET_PROTOTYPE_METHODC("execute", Execute);
+   DBX_NODE_SET_PROTOTYPE_METHODC("cleanup", Cleanup);
    DBX_NODE_SET_PROTOTYPE_METHODC("next", Next);
    DBX_NODE_SET_PROTOTYPE_METHODC("previous", Previous);
    DBX_NODE_SET_PROTOTYPE_METHODC("reset", Reset);
@@ -189,6 +191,120 @@ int mcursor::delete_mcursor_template(mcursor *cx)
 }
 
 
+void mcursor::Execute(const FunctionCallbackInfo<Value>& args)
+{
+   short async;
+   DBXCON *pcon;
+   Local<Object> obj;
+   Local<String> key;
+   mcursor *cx = ObjectWrap::Unwrap<mcursor>(args.This());
+   DBX_DBNAME *c = cx->c;
+   DBX_GET_ICONTEXT;
+   cx->m_count ++;
+
+   pcon = c->pcon;
+   pcon->psql = cx->psql;
+
+   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+
+   if (pcon->argc >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Execute", 1)));
+      return;
+   }
+   
+   DBX_DBFUN_START(c, pcon);
+
+   if (async) {
+      DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pcon);
+      baton->pcon->p_dbxfun = (int (*) (struct tagDBXCON * pcon)) dbx_sql_execute;
+      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+
+      baton->cb.Reset(isolate, cb);
+
+      cx->Ref();
+
+      if (c->dbx_queue_task((void *) c->dbx_process_task, (void *) c->dbx_invoke_callback_sql_execute, baton, 0)) {
+         char error[DBX_ERROR_SIZE];
+
+         T_STRCPY(error, _dbxso(error), pcon->error);
+         c->dbx_destroy_baton(baton, pcon);
+         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         return;
+      }
+      return;
+   }
+
+   dbx_sql_execute(pcon);
+
+   DBX_DBFUN_END(c);
+
+   obj = DBX_OBJECT_NEW();
+
+   key = c->dbx_new_string8(isolate, (char *) "sqlcode", 0);
+   DBX_SET(obj, key, DBX_INTEGER_NEW(pcon->psql->sqlcode));
+   key = c->dbx_new_string8(isolate, (char *) "sqlstate", 0);
+   DBX_SET(obj, key, c->dbx_new_string8(isolate, pcon->psql->sqlstate, 0));
+   if (pcon->error[0]) {
+      key = c->dbx_new_string8(isolate, (char *) "error", 0);
+      DBX_SET(obj, key, c->dbx_new_string8(isolate, pcon->error, 0));
+   }
+
+   args.GetReturnValue().Set(obj);
+}
+
+
+void mcursor::Cleanup(const FunctionCallbackInfo<Value>& args)
+{
+   short async;
+   DBXCON *pcon;
+   Local<String> result;
+   mcursor *cx = ObjectWrap::Unwrap<mcursor>(args.This());
+   DBX_DBNAME *c = cx->c;
+   DBX_GET_ISOLATE;
+   cx->m_count ++;
+
+   pcon = c->pcon;
+   pcon->psql = cx->psql;
+
+   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+
+   if (pcon->argc >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Cleanup", 1)));
+      return;
+   }
+   
+   DBX_DBFUN_START(c, pcon);
+
+   if (async) {
+      DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pcon);
+      baton->pcon->p_dbxfun = (int (*) (struct tagDBXCON * pcon)) dbx_sql_cleanup;
+      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+
+      baton->cb.Reset(isolate, cb);
+
+      cx->Ref();
+
+      if (c->dbx_queue_task((void *) c->dbx_process_task, (void *) c->dbx_invoke_callback, baton, 0)) {
+         char error[DBX_ERROR_SIZE];
+
+         T_STRCPY(error, _dbxso(error), pcon->error);
+         c->dbx_destroy_baton(baton, pcon);
+         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         return;
+      }
+      return;
+   }
+
+   dbx_sql_cleanup(pcon);
+
+   DBX_DBFUN_END(c);
+
+   result = c->dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   args.GetReturnValue().Set(result);
+   return;
+}
+
+
 void mcursor::Next(const FunctionCallbackInfo<Value>& args)
 {
    short async;
@@ -206,15 +322,16 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
+   if (pcon->argc >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
+      return;
+   }
+   if (async) {
+      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
+      return;
+   }
+
    if (cx->context == 1) {
-      if (pcon->argc >= DBX_MAXARGS) {
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
-         return;
-      }
-      if (async) {
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
-         return;
-      }
    
       if (cx->pqr_prev->keyn < 1) {
          args.GetReturnValue().Set(DBX_NULL());
@@ -269,14 +386,6 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
       }
    }
    else if (cx->context == 2) {
-      if (pcon->argc >= DBX_MAXARGS) {
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
-         return;
-      }
-      if (async) {
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
-         return;
-      }
    
       DBX_DBFUN_START(c, pcon);
       DBX_DB_LOCK(n, 0);
@@ -336,16 +445,7 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
       }
       return;
    }
-   else if (cx->context == 9) {
-      if (pcon->argc >= DBX_MAXARGS) {
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
-         return;
-      }
-      if (async) {
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
-         return;
-      }
-   
+   else if (cx->context == 9) {   
       eod = dbx_global_directory(pcon, cx->pqr_prev, 1, &(cx->counter));
 
       if (eod) {
@@ -357,7 +457,41 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
       }
       return;
    }
+   else if (cx->context == 11) {
 
+      if (!pcon->psql) {
+         args.GetReturnValue().Set(DBX_NULL());
+         return;
+      }
+
+      eod = dbx_sql_row(pcon, pcon->psql->row_no, 1);
+      if (eod) {
+         args.GetReturnValue().Set(DBX_NULL());
+      }
+      else {
+         int len, dsort, dtype;
+
+         obj = DBX_OBJECT_NEW();
+
+         for (n = 0; n < pcon->psql->no_cols; n ++) {
+            len = (int) dbx_get_block_size(&(pcon->output_val.svalue), pcon->output_val.offs, &dsort, &dtype);
+            pcon->output_val.offs += 5;
+
+            /* printf("\r\n ROW DATA: n=%d; len=%d; offset=%d; sort=%d; type=%d; str=%s;", n, len, pcon->output_val.offs, dsort, dtype, pcon->output_val.svalue.buf_addr + pcon->output_val.offs); */
+
+            if (dsort == DBX_DSORT_EOD || dsort == DBX_DSORT_ERROR) {
+               break;
+            }
+
+            key = c->dbx_new_string8n(isolate, (char *) pcon->psql->cols[n]->name.buf_addr, pcon->psql->cols[n]->name.len_used, 0);
+            DBX_SET(obj, key, c->dbx_new_string8n(isolate,  pcon->output_val.svalue.buf_addr + pcon->output_val.offs, len, 0));
+            pcon->output_val.offs += len;
+         }
+
+         args.GetReturnValue().Set(obj);
+      }
+      return;
+   }
 }
 
 
@@ -378,15 +512,16 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
+   if (pcon->argc >= DBX_MAXARGS) {
+      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Previous", 1)));
+      return;
+   }
+   if (async) {
+      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
+      return;
+   }
+
    if (cx->context == 1) {
-      if (pcon->argc >= DBX_MAXARGS) {
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
-         return;
-      }
-      if (async) {
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
-         return;
-      }
    
       if (cx->pqr_prev->keyn < 1) {
          args.GetReturnValue().Set(DBX_NULL());
@@ -430,14 +565,6 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
       }
    }
    else if (cx->context == 2) {
-      if (pcon->argc >= DBX_MAXARGS) {
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Previous", 1)));
-         return;
-      }
-      if (async) {
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
-         return;
-      }
    
       DBX_DBFUN_START(c, pcon);
       DBX_DB_LOCK(n, 0);
@@ -500,14 +627,6 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
       return;
    }
    else if (cx->context == 9) {
-      if (pcon->argc >= DBX_MAXARGS) {
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
-         return;
-      }
-      if (async) {
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
-         return;
-      }
    
       eod = dbx_global_directory(pcon, cx->pqr_prev, -1, &(cx->counter));
 
@@ -517,6 +636,40 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
       else {
          key = c->dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, c->utf8);
          args.GetReturnValue().Set(key);
+      }
+      return;
+   }
+   else if (cx->context == 11) {
+
+      if (!pcon->psql) {
+         args.GetReturnValue().Set(DBX_NULL());
+         return;
+      }
+
+      eod = dbx_sql_row(pcon, pcon->psql->row_no, -1);
+      if (eod) {
+         args.GetReturnValue().Set(DBX_NULL());
+      }
+      else {
+         int len, dsort, dtype;
+
+         obj = DBX_OBJECT_NEW();
+
+         for (n = 0; n < pcon->psql->no_cols; n ++) {
+            len = (int) dbx_get_block_size(&(pcon->output_val.svalue), pcon->output_val.offs, &dsort, &dtype);
+            pcon->output_val.offs += 5;
+
+            /* printf("\r\n ROW DATA: n=%d; len=%d; offset=%d; sort=%d; type=%d; str=%s;", n, len, pcon->output_val.offs, dsort, dtype, pcon->output_val.svalue.buf_addr + pcon->output_val.offs); */
+
+            if (dsort == DBX_DSORT_EOD || dsort == DBX_DSORT_ERROR) {
+               break;
+            }
+
+            key = c->dbx_new_string8n(isolate, (char *) pcon->psql->cols[n]->name.buf_addr, pcon->psql->cols[n]->name.len_used, 0);
+            DBX_SET(obj, key, c->dbx_new_string8n(isolate,  pcon->output_val.svalue.buf_addr + pcon->output_val.offs, len, 0));
+            pcon->output_val.offs += len;
+         }
+         args.GetReturnValue().Set(obj);
       }
       return;
    }

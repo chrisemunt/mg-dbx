@@ -47,8 +47,14 @@ Version 1.1.5 4 October 2019:
 
 Version 1.2.6 10 October 2019:
    Introduce support for direct access to InterSystems IRIS/Cache classes (db.classmethod() et al).
-   Extend cursor based data retrieval to include an option for generating a global name listing (globaldirectory: true).
-   Introduce a method to report and (optionally change) the current working global directory (or Namespace) (db.namespace()). 
+   Extend cursor based data retrieval to include an option for generating a global directory listing (globaldirectory: true).
+   Introduce a method to report and (optionally change) the current working global directory (or Namespace) (db.namespace()).
+   Correct a fault that led to the timeout occasionally not being honoured in the **lock()** method.
+   Correct a fault that led to Node.js exceptions not being processed correctly.
+
+Version 1.3.7 1 November 2019:
+   Introduce support for direct access to InterSystems SQL and MGSQL.
+   Correct a faulty in the InterSystems Cache/IRIS API to globals that resulted in failures - notably in cases where there was a mix of string and numberic data in the global records.
 
 */
 
@@ -62,6 +68,7 @@ extern int errno;
 #endif
 
 static int     dbx_counter             = 0;
+static int     dbx_sql_counter         = 0;
 int            dbx_total_tasks         = 0;
 int            dbx_request_errors      = 0;
 
@@ -180,6 +187,8 @@ void DBX_DBNAME::Init(Handle<Object> target)
    DBX_NODE_SET_PROTOTYPE_METHOD("function", ExtFunction);
    DBX_NODE_SET_PROTOTYPE_METHOD("classmethod", ClassMethod);
    DBX_NODE_SET_PROTOTYPE_METHOD("classmethod_close", ClassMethod_Close);
+   DBX_NODE_SET_PROTOTYPE_METHOD("sql", SQL);
+   DBX_NODE_SET_PROTOTYPE_METHOD("sql_close", SQL_Close);
 
    DBX_NODE_SET_PROTOTYPE_METHOD("sleep", Sleep);
    DBX_NODE_SET_PROTOTYPE_METHOD("benchmark", Benchmark);
@@ -260,6 +269,7 @@ void DBX_DBNAME::New(const FunctionCallbackInfo<Value>& args)
    c->pcon->ibuffer_size = 32000;
    c->pcon->use_mutex = 0;
 
+   c->pcon->psql = NULL;
    c->pcon->p_isc_so = NULL;
    c->pcon->p_ydb_so = NULL;
 
@@ -403,6 +413,9 @@ int DBX_DBNAME::dbx_ibuffer_add(DBXCON *pcon, v8::Isolate * isolate, int argn, L
    }
    pcon->ibuffer_used += len;
 
+
+   pcon->args[argn].type = DBX_TYPE_STR; /* Bug fix v1.3.7 */
+
    pcon->args[argn].svalue.buf_addr = (char *) p;
    pcon->args[argn].svalue.len_alloc = len;
    pcon->args[argn].svalue.len_used = len;
@@ -510,8 +523,8 @@ async_rtn DBX_DBNAME::dbx_invoke_callback(uv_work_t *req)
    else
       argv[0] = DBX_INTEGER_NEW(false);
 
-   baton->result = dbx_new_string8n(isolate, baton->pcon->output_val.svalue.buf_addr, baton->pcon->output_val.svalue.len_used, baton->c->utf8);
-   argv[1] = baton->result;
+   baton->result_str = dbx_new_string8n(isolate, baton->pcon->output_val.svalue.buf_addr, baton->pcon->output_val.svalue.len_used, baton->c->utf8);
+   argv[1] = baton->result_str;
 
 #if DBX_NODE_VERSION < 80000
    TryCatch try_catch;
@@ -542,6 +555,68 @@ async_rtn DBX_DBNAME::dbx_invoke_callback(uv_work_t *req)
    return;
 }
 
+
+async_rtn DBX_DBNAME::dbx_invoke_callback_sql_execute(uv_work_t *req)
+{
+   Isolate* isolate = Isolate::GetCurrent();
+#if DBX_NODE_VERSION >= 100000
+   Local<Context> icontext = isolate->GetCurrentContext();
+#endif
+   HandleScope scope(isolate);
+   Local<String> key;
+
+   dbx_baton_t *baton = static_cast<dbx_baton_t *>(req->data);
+
+   baton->c->Unref();
+
+   Local<Value> argv[2];
+
+   if (baton->pcon->error[0])
+      argv[0] = DBX_INTEGER_NEW(true);
+   else
+      argv[0] = DBX_INTEGER_NEW(false);
+
+   baton->result_obj = DBX_OBJECT_NEW();
+
+   key = dbx_new_string8(isolate, (char *) "sqlcode", 0);
+   DBX_SET(baton->result_obj, key, DBX_INTEGER_NEW(baton->pcon->psql->sqlcode));
+   key = dbx_new_string8(isolate, (char *) "sqlstate", 0);
+   DBX_SET(baton->result_obj, key, dbx_new_string8(isolate, baton->pcon->psql->sqlstate, 0));
+   if (baton->pcon->error[0]) {
+      key = dbx_new_string8(isolate, (char *) "error", 0);
+      DBX_SET(baton->result_obj, key, dbx_new_string8(isolate, baton->pcon->error, 0));
+   }
+
+   argv[1] =  baton->result_obj;
+
+#if DBX_NODE_VERSION < 80000
+   TryCatch try_catch;
+#endif
+
+   Local<Function> cb = Local<Function>::New(isolate, baton->cb);
+
+#if DBX_NODE_VERSION >= 120000
+   /* cb->Call(isolate->GetCurrentContext(), isolate->GetCurrentContext()->Global(), 2, argv); */
+   cb->Call(isolate->GetCurrentContext(), Null(isolate), 2, argv).ToLocalChecked();
+#else
+   cb->Call(isolate->GetCurrentContext()->Global(), 2, argv);
+#endif
+
+#if DBX_NODE_VERSION < 80000
+   if (try_catch.HasCaught()) {
+      node::FatalException(isolate, try_catch);
+   }
+#endif
+
+   baton->cb.Reset();
+
+	DBX_DBFUN_END(baton->c);
+
+   dbx_destroy_baton(baton, baton->pcon);
+
+   delete req;
+   return;
+}
 
 
 void DBX_DBNAME::Version(const FunctionCallbackInfo<Value>& args)
@@ -947,6 +1022,17 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
          else {
             dbx_ibuffer_add(pcon, isolate, nx, str, pval->svalue.buf_addr, (int) pval->svalue.len_used, 0);
          }
+/*
+{
+   char buffer[256];
+   strcpy(buffer, "");
+   if (pval->svalue.len_used > 0) {
+      strncpy(buffer,  pval->svalue.buf_addr,  pval->svalue.len_used);
+      buffer[ pval->svalue.len_used] = '\0';
+   }
+   printf("\r\n cmxxx pval->type=%d; pval->num.int32=%d; pval->svalue.buf_addr=%s", pval->type, pval->num.int32, buffer);
+}
+*/
 
          if (pcon->dbtype != DBX_DBTYPE_YOTTADB && context == 0) {
             rc = dbx_reference(pcon, nx);
@@ -1761,6 +1847,27 @@ void DBX_DBNAME::MGlobal(const FunctionCallbackInfo<Value>& args)
       pvalp->pnext = NULL;
    }
 
+/*
+{
+   int n;
+   char buffer[256];
+
+   printf("\r\n cmxxx mglobal START");
+   n = 0;
+   pval = gx->pkey;
+   while (pval) {
+      strcpy(buffer, "");
+      if (pcon->args[n].svalue.len_used > 0) {
+         strncpy(buffer,   pval->svalue.buf_addr,   pval->svalue.len_used);
+         buffer[ pval->svalue.len_used] = '\0';
+      }
+      printf("\r\n cmxxx >>>>>>> n=%d; type=%d; int32=%d; str=%s", ++ n, pval->type, pval->num.int32, buffer);
+      pval = pval->pnext;
+   }
+    printf("\r\n cmxxx mglobal END");
+}
+*/
+
    return;
 }
 
@@ -2301,6 +2408,121 @@ void DBX_DBNAME::ClassMethod_Close(const FunctionCallbackInfo<Value>& args)
 
    clx->delete_mclass_template(clx);
 #endif
+
+   return;
+}
+
+
+void DBX_DBNAME::SQL(const FunctionCallbackInfo<Value>& args)
+{
+   int n, len;
+   char buffer[256];
+   DBXSQL *psql;
+   DBXCON *pcon;
+   Local<Object> obj;
+   Local<String> key;
+   Local<String> value;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   DBX_GET_ICONTEXT;
+   c->m_count ++;
+
+   pcon = c->pcon;
+   pcon->argc = args.Length();
+
+   if (pcon->argc < 1) {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The sql method takes at least one argument (the sql script)", 1)));
+      return;
+   }
+
+   obj = DBX_TO_OBJECT(args[0]);
+   key = dbx_new_string8(isolate, (char *) "sql", 1);
+   if (DBX_GET(obj, key)->IsString()) {
+      value = DBX_TO_STRING(DBX_GET(obj, key));
+      len = (int) dbx_string8_length(isolate, value, 0);
+      psql = (DBXSQL *) dbx_malloc(sizeof(DBXSQL) + (len + 4), 0);
+      for (n = 0; n < DBX_SQL_MAXCOL; n ++) {
+         psql->cols[n] = NULL;
+      }
+      psql->no_cols = 0;
+      psql->sql_script = ((char *) psql) + sizeof(DBXSQL);
+      psql->sql_script_len = len;
+      dbx_write_char8(isolate, value, psql->sql_script, pcon->utf8);
+   }
+   else {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Missing SQL script in the sql object", 1)));
+      return;
+   }
+
+   psql->sql_type = DBX_SQL_MGSQL;
+   key = dbx_new_string8(isolate, (char *) "type", 1);
+   if (DBX_GET(obj, key)->IsString()) {
+      value = DBX_TO_STRING(DBX_GET(obj, key));
+      dbx_write_char8(isolate, value, buffer, pcon->utf8);
+      dbx_lcase(buffer);
+      if (strstr(buffer, "intersys") || strstr(buffer, "cach") || strstr(buffer, "iris")) {
+         psql->sql_type = DBX_SQL_ISCSQL;
+      }
+   }
+
+   DBX_DB_LOCK(n, 0);
+   mcursor *cx = mcursor::NewInstance(args);
+   DBX_DB_UNLOCK(n);
+
+   cx->c = c;
+   cx->pcon = c->pcon;
+   cx->psql = psql;
+   DBX_DB_LOCK(n, 0);
+   psql->sql_no = ++ dbx_sql_counter;
+   DBX_DB_UNLOCK(n);
+   
+   cx->context = 11;
+   cx->counter = 0;
+   cx->getdata = 0;
+   cx->multilevel = 0;
+   cx->format = 0;
+
+   if (pcon->argc > 1) {
+      dbx_is_object(args[1], &n);
+      if (n) {
+         obj = DBX_TO_OBJECT(args[1]);
+         key = dbx_new_string8(isolate, (char *) "format", 1);
+         if (DBX_GET(obj, key)->IsString()) {
+            char buffer[64];
+            value = DBX_TO_STRING(DBX_GET(obj, key));
+            dbx_write_char8(isolate, value, buffer, 1);
+            dbx_lcase(buffer);
+            if (!strcmp(buffer, "url")) {
+               cx->format = 1;
+            }
+         }
+      }
+   }
+
+   return;
+}
+
+
+void DBX_DBNAME::SQL_Close(const FunctionCallbackInfo<Value>& args)
+{
+   int js_narg;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   DBX_GET_ISOLATE;
+   c->m_count ++;
+
+   js_narg = args.Length();
+
+   if (js_narg != 1) {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The SQL_Close method takes one argument (the SQL reference)", 1)));
+      return;
+   }
+
+#if DBX_NODE_VERSION >= 100000
+   mcursor * cx = node::ObjectWrap::Unwrap<mcursor>(args[0]->ToObject(isolate->GetCurrentContext()).ToLocalChecked());
+#else
+   mcursor * cx = node::ObjectWrap::Unwrap<mcursor>(args[0]->ToObject());
+#endif
+
+   cx->delete_mcursor_template(cx);
 
    return;
 }
@@ -3953,6 +4175,9 @@ int ydb_load_library(DBXCON *pcon)
       goto ydb_load_library_exit;
    }
 
+   sprintf(fun, "%s_zstatus", pcon->p_ydb_so->funprfx);
+   pcon->p_ydb_so->p_ydb_zstatus = (void (*) (ydb_char_t *, ydb_long_t)) dbx_dso_sym(pcon->p_ydb_so->p_library, (char *) fun);
+
    pcon->p_ydb_so->loaded = 1;
 
 ydb_load_library_exit:
@@ -4423,6 +4648,18 @@ int dbx_reference(DBXCON *pcon, int n)
 {
    int rc;
    unsigned int ne;
+
+/*
+{
+   char buffer[256];
+   strcpy(buffer, "");
+   if (pcon->args[n].svalue.len_used > 0) {
+      strncpy(buffer,  pcon->args[n].svalue.buf_addr,  pcon->args[n].svalue.len_used);
+      buffer[pcon->args[n].svalue.len_used] = '\0';
+   }
+   printf("\r\n cmxxx >>>>>>> n=%d; type=%d; int32=%d; str=%s", n, pcon->args[n].type,  pcon->args[n].num.int32, buffer);
+}
+*/
 
    if (pcon->args[n].type == DBX_TYPE_INT) {
       rc = pcon->p_isc_so->p_CachePushInt((int) pcon->args[n].num.int32);
@@ -5194,6 +5431,310 @@ dbx_getproperty_exit:
 }
 
 
+int dbx_sql_execute(DBXCON *pcon)
+{
+   int rc, len, dsort, dtype, cn, no_cols;
+   unsigned long offset;
+   char label[16], routine[16], params[9], buffer[8];
+   DBXFUN fun;
+
+   if (pcon->p_debug && pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n   >>> dbx_sql_execute");
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   pcon->psql->no_cols = 0;
+   pcon->psql->row_no = 0;
+   pcon->psql->sqlcode = 0;
+   strcpy(pcon->psql->sqlstate, "00000");
+
+   strcpy(params, "");
+   if (pcon->psql->sql_type == DBX_SQL_ISCSQL) {
+      strcpy(label, "sqleisc");
+   }
+   else {
+      strcpy(label, "sqlemg");
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      strcpy(label, "sqlemg");
+   }
+
+   strcpy(routine, "%zmgsis");
+   fun.label = label;
+   fun.label_len = (int) strlen(label);
+   fun.routine = routine;
+   fun.routine_len = (int) strlen(routine);
+   pcon->output_val.svalue.len_used = 0;
+   pcon->output_val.svalue.buf_addr[0] = '\0';
+   pcon->output_val.svalue.buf_addr[1] = '\0';
+   pcon->output_val.svalue.buf_addr[2] = '\0';
+   pcon->output_val.svalue.buf_addr[3] = '\0';
+   pcon->output_val.svalue.buf_addr[4] = '\0';
+
+   DBX_DB_LOCK(rc, 0);
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      sprintf(buffer, "%d", pcon->psql->sql_no);
+      rc = pcon->p_ydb_so->p_ydb_ci(fun.label, pcon->output_val.svalue.buf_addr, buffer, pcon->psql->sql_script, params);
+
+      if (rc == YDB_OK) {
+         pcon->output_val.svalue.len_used = (unsigned int) dbx_get_size((unsigned char *) pcon->output_val.svalue.buf_addr);
+      }
+      else if (pcon->p_ydb_so->p_ydb_zstatus) {
+         pcon->p_ydb_so->p_ydb_zstatus((ydb_char_t *) pcon->error, (ydb_long_t) 255);
+      }
+   }
+   else {
+      rc = pcon->p_isc_so->p_CachePushFunc(&(fun.rflag), (int) fun.label_len, (const Callin_char_t *) fun.label, (int) fun.routine_len, (const Callin_char_t *) fun.routine);
+      rc = pcon->p_isc_so->p_CachePushInt(pcon->psql->sql_no);
+      rc = pcon->p_isc_so->p_CachePushStr((int) pcon->psql->sql_script_len, (Callin_char_t *) pcon->psql->sql_script);
+      rc = pcon->p_isc_so->p_CachePushStr((int) strlen(params), (Callin_char_t *) params);
+      rc = pcon->p_isc_so->p_CacheExtFun(fun.rflag, 3);
+      if (rc == CACHE_SUCCESS) {
+         isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+      }
+   }
+
+   DBX_DB_UNLOCK(rc);
+
+   if (rc != CACHE_SUCCESS) {
+      pcon->psql->sqlcode = -1;
+      strcpy(pcon->psql->sqlstate, "HY000");
+      dbx_error_message(pcon, rc);
+      goto dbx_sql_execute_exit;
+   }
+
+   offset = 4;
+   len = (int) dbx_get_block_size(&(pcon->output_val.svalue), offset, &dsort, &dtype);
+   offset += 5;
+
+   /* printf("\r\nEXEC SQL: len=%d; offset=%d; sort=%d; type=%d; str=%s;", len, offset, dsort, dtype, pcon->output_val.svalue.buf_addr + offset); */
+
+   if (dsort == DBX_DSORT_EOD || dsort == DBX_DSORT_ERROR) {
+      pcon->psql->sqlcode = -1;
+      strcpy(pcon->psql->sqlstate, "HY000");
+      strncpy(pcon->error, pcon->output_val.svalue.buf_addr + offset, len);
+      pcon->error[len] = '\0';
+      offset += len;
+      goto dbx_sql_execute_exit;      
+   }
+
+   strncpy(buffer, pcon->output_val.svalue.buf_addr + offset, len);
+   buffer[len] = '\0';
+   offset += len;
+   no_cols = (int) strtol(buffer, NULL, 10);
+   /* printf("\r\nlen=%d; no_cols=%d;", len, no_cols); */
+
+   for (cn = 0; cn < no_cols; cn ++) {
+      len = (int) dbx_get_block_size(&(pcon->output_val.svalue), offset, &dsort, &dtype);
+      offset += 5;
+
+      /* printf("\r\nEXEC SQL COL: cn=%d; len=%d; offset=%d; sort=%d; type=%d; str=%s;", cn, len, offset, dsort, dtype, pcon->output_val.svalue.buf_addr + offset); */
+
+      if (dsort == DBX_DSORT_EOD || dsort == DBX_DSORT_ERROR) {
+         break;
+      }
+
+      pcon->psql->cols[cn] = (DBXSQLCOL *) dbx_malloc(sizeof(DBXSQLCOL) + (len + 4), 0);
+      pcon->psql->cols[cn]->name.buf_addr = ((char *) pcon->psql->cols[cn]) + sizeof(DBXSQLCOL);
+      strncpy(pcon->psql->cols[cn]->name.buf_addr, pcon->output_val.svalue.buf_addr + offset, len);
+      pcon->psql->cols[cn]->name.buf_addr[len] = '\0';
+      pcon->psql->cols[cn]->name.len_used = len;
+
+      offset += len;
+   }
+   pcon->psql->no_cols = no_cols;
+   pcon->psql->cols[no_cols] = NULL; 
+
+dbx_sql_execute_exit:
+
+   isc_cleanup(pcon);
+
+   return 0;
+}
+
+
+int dbx_sql_row(DBXCON *pcon, int rn, int dir)
+{
+   int rc, len, dsort, dtype, row_no, eod;
+   unsigned long offset;
+   char label[16], routine[16], params[9], buffer[8], rowstr[8];
+   DBXFUN fun;
+
+   if (pcon->p_debug && pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n   >>> dbx_sql_row");
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   eod = 0;
+   pcon->psql->sqlcode = 0;
+   strcpy(pcon->psql->sqlstate, "00000");
+   pcon->output_val.offs = 0;
+   if (dir == 1)
+      strcpy(params, "+1");
+   else if (dir == -1)
+      strcpy(params, "-1");
+   else
+      strcpy(params, "");
+   strcpy(label, "sqlrow");
+
+   strcpy(routine, "%zmgsis");
+   fun.label = label;
+   fun.label_len = (int) strlen(label);
+   fun.routine = routine;
+   fun.routine_len = (int) strlen(routine);
+   pcon->output_val.svalue.len_used = 0;
+   pcon->output_val.svalue.buf_addr[0] = '\0';
+   pcon->output_val.svalue.buf_addr[1] = '\0';
+   pcon->output_val.svalue.buf_addr[2] = '\0';
+   pcon->output_val.svalue.buf_addr[3] = '\0';
+   pcon->output_val.svalue.buf_addr[4] = '\0';
+
+   DBX_DB_LOCK(rc, 0);
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      sprintf(buffer, "%d", pcon->psql->sql_no);
+      sprintf(rowstr, "%d", rn);
+      rc = pcon->p_ydb_so->p_ydb_ci(fun.label, pcon->output_val.svalue.buf_addr, buffer, rowstr, params);
+
+      if (rc == YDB_OK) {
+         pcon->output_val.svalue.len_used = (unsigned int) dbx_get_size((unsigned char *) pcon->output_val.svalue.buf_addr);
+      }
+      else if (pcon->p_ydb_so->p_ydb_zstatus) {
+         pcon->p_ydb_so->p_ydb_zstatus((ydb_char_t *) pcon->error, (ydb_long_t) 255);
+      }
+   }
+   else {
+      rc = pcon->p_isc_so->p_CachePushFunc(&(fun.rflag), (int) fun.label_len, (const Callin_char_t *) fun.label, (int) fun.routine_len, (const Callin_char_t *) fun.routine);
+      rc = pcon->p_isc_so->p_CachePushInt(pcon->psql->sql_no);
+      rc = pcon->p_isc_so->p_CachePushInt(rn);
+      rc = pcon->p_isc_so->p_CachePushStr((int) strlen(params), (Callin_char_t *) params);
+      rc = pcon->p_isc_so->p_CacheExtFun(fun.rflag, 3);
+      if (rc == CACHE_SUCCESS) {
+         isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+      }
+   }
+
+   DBX_DB_UNLOCK(rc);
+
+   if (rc != CACHE_SUCCESS) {
+      eod = 1;
+      pcon->psql->sqlcode = -1;
+      strcpy(pcon->psql->sqlstate, "HY000");
+      dbx_error_message(pcon, rc);
+      goto dbx_sql_row_exit;
+   }
+
+   if (pcon->output_val.svalue.len_used == 0) {
+      eod = 1;
+      pcon->psql->row_no = 0;
+      goto dbx_sql_row_exit;
+   }
+
+   offset = 4;
+   len = (int) dbx_get_block_size(&(pcon->output_val.svalue), offset, &dsort, &dtype);
+   offset += 5;
+
+   if (dsort == DBX_DSORT_EOD || dsort == DBX_DSORT_ERROR) {
+      pcon->psql->sqlcode = -1;
+      strcpy(pcon->psql->sqlstate, "HY000");
+      strncpy(pcon->error, pcon->output_val.svalue.buf_addr + offset, len);
+      pcon->error[len] = '\0';
+      offset += len;
+      goto dbx_sql_row_exit;      
+   }
+
+   if (len == 0) {
+      eod = 1;
+      pcon->psql->row_no = 0;
+      goto dbx_sql_row_exit;
+   }
+
+   strncpy(buffer, pcon->output_val.svalue.buf_addr + offset, len);
+   buffer[len] = '\0';
+   offset += len;
+   row_no = (int) strtol(buffer, NULL, 10);
+   pcon->psql->row_no = row_no;
+   pcon->output_val.offs = offset;
+
+   /* printf("\r\nROW NUMBER: len=%d; row_no=%d; pcon->output_val.offs=%d; total=%d;", len, row_no, pcon->output_val.offs, pcon->output_val.svalue.len_used); */
+
+dbx_sql_row_exit:
+
+   isc_cleanup(pcon);
+
+   return eod;
+}
+
+
+int dbx_sql_cleanup(DBXCON *pcon)
+{
+   int rc;
+   char label[16], routine[16], params[9], buffer[8];
+   DBXFUN fun;
+
+   if (pcon->p_debug && pcon->p_debug->debug == 1) {
+      fprintf(pcon->p_debug->p_fdebug, "\r\n   >>> dbx_sql_cleanup");
+      fflush(pcon->p_debug->p_fdebug);
+   }
+
+   pcon->psql->sqlcode = 0;
+   strcpy(pcon->psql->sqlstate, "00000");
+   pcon->output_val.offs = 0;
+   strcpy(params, "");
+   strcpy(label, "sqldel");
+
+   strcpy(routine, "%zmgsis");
+   fun.label = label;
+   fun.label_len = (int) strlen(label);
+   fun.routine = routine;
+   fun.routine_len = (int) strlen(routine);
+   pcon->output_val.svalue.len_used = 0;
+   pcon->output_val.svalue.buf_addr[0] = '\0';
+   pcon->output_val.svalue.buf_addr[1] = '\0';
+   pcon->output_val.svalue.buf_addr[2] = '\0';
+   pcon->output_val.svalue.buf_addr[3] = '\0';
+   pcon->output_val.svalue.buf_addr[4] = '\0';
+
+   DBX_DB_LOCK(rc, 0);
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      sprintf(buffer, "%d", pcon->psql->sql_no);
+      rc = pcon->p_ydb_so->p_ydb_ci(fun.label, pcon->output_val.svalue.buf_addr, buffer, params);
+
+      if (rc == YDB_OK) {
+         pcon->output_val.svalue.len_used = (unsigned int) dbx_get_size((unsigned char *) pcon->output_val.svalue.buf_addr);
+      }
+      else if (pcon->p_ydb_so->p_ydb_zstatus) {
+         pcon->p_ydb_so->p_ydb_zstatus((ydb_char_t *) pcon->error, (ydb_long_t) 255);
+      }
+   }
+   else {
+      rc = pcon->p_isc_so->p_CachePushFunc(&(fun.rflag), (int) fun.label_len, (const Callin_char_t *) fun.label, (int) fun.routine_len, (const Callin_char_t *) fun.routine);
+      rc = pcon->p_isc_so->p_CachePushInt(pcon->psql->sql_no);
+      rc = pcon->p_isc_so->p_CachePushStr((int) strlen(params), (Callin_char_t *) params);
+      rc = pcon->p_isc_so->p_CacheExtFun(fun.rflag, 2);
+      if (rc == CACHE_SUCCESS) {
+         isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+      }
+   }
+
+   DBX_DB_UNLOCK(rc);
+
+   if (rc == CACHE_SUCCESS) {
+      dbx_create_string(&(pcon->output_val.svalue), (void *) &rc, DBX_TYPE_INT);
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+   isc_cleanup(pcon);
+
+   return 0;
+}
+
+
 int dbx_global_directory(DBXCON *pcon, DBXQR *pqr_prev, short dir, int *counter)
 {
    int rc, eod, len, tmpglolen;
@@ -5833,6 +6374,58 @@ int dbx_pool_submit_task(DBXCON *pcon)
    pthread_mutex_unlock(&dbx_result_mutex);
 #endif
    return 1;
+}
+
+
+int dbx_add_block_size(DBXSTR *block, unsigned long offset, unsigned long data_len, int dsort, int dtype)
+{
+   dbx_set_size((unsigned char *) block->buf_addr + offset, data_len);
+   block->buf_addr[offset + 4] = (unsigned char) ((dsort * 20) + dtype);
+
+   return 1;
+}
+
+
+unsigned long dbx_get_block_size(DBXSTR *block, unsigned long offset, int *dsort, int *dtype)
+{
+   unsigned long data_len;
+   unsigned char uc;
+
+   data_len = 0;
+   uc = (unsigned char) block->buf_addr[offset + 4];
+
+   *dtype = uc % 20;
+   *dsort = uc / 20;
+
+   if (*dsort != DBX_DSORT_STATUS) {
+      data_len = dbx_get_size((unsigned char *) block->buf_addr + offset);
+   }
+
+   if (!DBX_DSORT_ISVALID(*dsort)) {
+      *dsort = DBX_DSORT_INVALID;
+   }
+
+   return data_len;
+}
+
+
+int dbx_set_size(unsigned char *str, unsigned long data_len)
+{
+   str[0] = (unsigned char) (data_len >> 0);
+   str[1] = (unsigned char) (data_len >> 8);
+   str[2] = (unsigned char) (data_len >> 16);
+   str[3] = (unsigned char) (data_len >> 24);
+
+   return 0;
+}
+
+
+unsigned long dbx_get_size(unsigned char *str)
+{
+   unsigned long size;
+
+   size = ((unsigned char) str[0]) | (((unsigned char) str[1]) << 8) | (((unsigned char) str[2]) << 16) | (((unsigned char) str[3]) << 24);
+   return size;
 }
 
 

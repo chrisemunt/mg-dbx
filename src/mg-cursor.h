@@ -42,6 +42,7 @@ class mcursor : public node::ObjectWrap
    DBXQR          *pqr_next;
    DBXCON         *pcon;
    DBXSTR         data;
+   DBXSQL         *psql;
    int            m_count;
    DBX_DBNAME     *c;
 
@@ -62,6 +63,8 @@ class mcursor : public node::ObjectWrap
 
    static int delete_mcursor_template(mcursor *cx);
 
+   static void Execute(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void Cleanup(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void Next(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void Previous(const v8::FunctionCallbackInfo<v8::Value>& args);
    static void Reset(const v8::FunctionCallbackInfo<v8::Value>& args);
