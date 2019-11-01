@@ -3,9 +3,9 @@
 High speed Synchronous and Asynchronous access to M-like databases from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-10 October 2019, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+1 November 2019, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* Verified to work with Node.js v4 to v12.
+* Verified to work with Node.js v8 to v12.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
 ## Pre-requisites 
@@ -317,11 +317,11 @@ Example (return all keys and names from the 'Person' global):
 
 #### Traversing the dataset
 
-In Key Order:
+In key order:
 
        result = query.next();
 
-In Reverse Key Order:
+In reverse key order:
 
        result = query.previous();
 
@@ -403,7 +403,7 @@ Synchronous:
 
 Asynchronous:
 
-       db.function(<class_name>, <classmethod_name>, <parameters>, callback(<error>, <result>));
+       db.classmethod(<class_name>, <classmethod_name>, <parameters>, callback(<error>, <result>));
       
 Example (Encode a date to internal storage format):
 
@@ -468,6 +468,154 @@ Example 2 Reset a container to hold an existing instance (object %Id of 2):
        person.reset("User.Person", "%OpenId", 2);
 
 
+### Direct access to SQL: MGSQL and InterSystems SQL (IRIS and Cache)
+
+**mg-dbx** provides direct access to the Open Source MGSQL engine ([https://github.com/chrisemunt/mgsql](https://github.com/chrisemunt/mgsql)) and InterSystems SQL (IRIS and Cache).
+
+In order to use this facility two M routines need to be installed (%zmgsi and %zmgsis).  These can be found in the GitHub source code repository ([https://github.com/chrisemunt/mg-dbx](https://github.com/chrisemunt/mg-dbx))
+
+
+#### Installation for YottaDB
+
+The instructions given here assume a standard 'out of the box' installation of **YottaDB** deployed in the following location:
+
+       /usr/local/lib/yottadb/r122
+
+The primary default location for routines:
+
+       /root/.yottadb/r1.22_x86_64/r
+
+Copy all the routines (i.e. all files with an 'm' extension) held in the GitHub **/yottadb** directory to:
+
+       /root/.yottadb/r1.22_x86_64/r
+
+Change directory to the following location and start a **YottaDB** command shell:
+
+       cd /usr/local/lib/yottadb/r122
+       ./ydb
+
+Link all the **zmgsi** routines and check the installation:
+
+       do ylink^%zmgsi
+
+       do ^%zmgsi
+
+       M/Gateway Developments Ltd - Service Integration Gateway
+       Version: 3.2; Revision 3 (1 November 2019)
+
+Note that the version of **zmgsi** is successfully displayed.
+
+Finally, add the following lines to the interface file (**cm.ci** in the example used in the db.open() method).
+
+       sqlemg: ydb_char_t * sqlemg^%zmgsis(I:ydb_char_t*, I:ydb_char_t *, I:ydb_char_t *)
+       sqlrow: ydb_char_t * sqlrow^%zmgsis(I:ydb_char_t*, I:ydb_char_t *, I:ydb_char_t *)
+       sqldel: ydb_char_t * sqldel^%zmgsis(I:ydb_char_t*, I:ydb_char_t *)
+
+
+#### Installation for other M systems
+
+Log in to the Manager UCI and, using the %RI utility (or similar) load the **zmgsi** routines held in **/m/zmgsi.ro**.  Change to your development UCI and check the installation:
+
+       do ^%zmgsi
+
+       M/Gateway Developments Ltd - Service Integration Gateway
+       Version: 3.2; Revision 3 (1 November 2019)
+
+
+#### Specifying the SQL query
+
+The first task is to specify the SQL query.
+
+       query = db.sql({sql: <sql_statement>[, type: <sql_engine>]);
+
+Example 1 (using MGSQL):
+
+       query = db.sql({sql: "select * from person"});
+
+
+Example 2 (using InterSystems SQL):
+
+       query = db.sql({sql: "select * from SQLUser.person", type: "Cache"});
+
+
+#### Execute an SQL query
+
+Synchronous:
+
+       var result = <query>.execute();
+
+Asynchronous:
+
+       <query>.execute(callback(<error>, <result>));
+
+
+The result of query execution is an object containing the return code and state and any associated error message.  The familiar ODBC return and status codes are used.
+
+Example 1 (successful execution):
+
+       {
+           "sqlcode": 0,
+           "sqlstate": "00000",
+       }
+
+
+Example 2 (unsuccessful execution):
+
+       {
+           "sqlcode": -1,
+           "sqlstate": "HY000",
+           "error": "no such table 'person'"
+       }
+
+
+#### Traversing the returned dataset (SQL 'select' queries)
+
+In result-set order:
+
+       result = query.next();
+
+In reverse result-set order:
+
+       result = query.previous();
+
+In all cases these methods will return 'null' when the end of the dataset is reached.
+
+Example:
+
+       while ((row = query.next()) !== null) {
+          console.log("row: " + JSON.stringify(result, null, '\t'));
+       }
+
+The output for each iteration is a row of the generated SQL result-set.  For example:
+
+       {
+           "number": 1,
+           "name": "John Smith",
+       }
+
+#### SQL cleanup
+
+For 'select' queries that generate a result-set it is good practice to invoke the 'cleanup' method at the end to delete the result-set held in the database.
+
+Synchronous:
+
+       var result = <query>.cleanup();
+
+Asynchronous:
+
+       <query>.cleanup(callback(<error>, <result>));
+
+#### Reset an SQL container with a new SQL Query
+
+Synchronous:
+
+       <query>.reset({sql: <sql_statement>[, type: <sql_engine>]);
+
+Asynchronous:
+
+       <query>.reset({sql: <sql_statement>[, type: <sql_engine>], callback(<error>, <result>));
+
+
 ### Return the version of mg-dbx
 
        var result = db.version();
@@ -522,4 +670,10 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Introduce a method to report and (optionally change) the current working global directory (or Namespace).
 * Correct a fault that led to the timeout occasionally not being honoured in the **lock()** method.
 * Correct a fault that led to Node.js exceptions not being processed correctly.
+
+### v1.3.7 (1 November 2019)
+
+* Introduce support for direct access to InterSystems SQL and MGSQL.
+* Correct a fault in the InterSystems Cache/IRIS API to globals that resulted in failures - notably in cases where there was a mix of string and numeric data in the global records.
+
 
