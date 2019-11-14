@@ -752,6 +752,7 @@ void mcursor::Reset(const FunctionCallbackInfo<Value>& args)
    cx->getdata = 0;
    cx->multilevel = 0;
    cx->format = 0;
+
    if (pcon->argc > 1) {
       obj = DBX_TO_OBJECT(args[1]);
       key = c->dbx_new_string8(isolate, (char *) "getdata", 1);

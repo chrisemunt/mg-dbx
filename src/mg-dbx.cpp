@@ -54,7 +54,13 @@ Version 1.2.6 10 October 2019:
 
 Version 1.3.7 1 November 2019:
    Introduce support for direct access to InterSystems SQL and MGSQL.
-   Correct a faulty in the InterSystems Cache/IRIS API to globals that resulted in failures - notably in cases where there was a mix of string and numberic data in the global records.
+   Correct a fault in the InterSystems Cache/IRIS API to globals that resulted in failures - notably in cases where there was a mix of string and numeric data in the global records.
+
+Version 1.3.8 14 November 2019:
+   Correct a fault in the Global Increment method.
+   Correct a fault that resulted in query.next() and query.previous() loops not terminating properly (with null) under YottaDB.
+   - This fault affected YottaDB releases after 1.22
+   Modify the version() method so that it returns the version of YottaDB rather than the version of the underlying GT.M engine.
 
 */
 
@@ -1047,16 +1053,10 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
       pcon->args[nx].cvalue.pstr = 0;
 
       if (args[n]->IsInt32()) {
-         pcon->args[nx].type = DBX_TYPE_INT;
          pcon->args[nx].num.int32 = (int) DBX_INT32_VALUE(args[n]);
          T_SPRINTF(buffer, _dbxso(buffer), "%d", pcon->args[nx].num.int32);
          dbx_ibuffer_add(pcon, isolate, nx, str, buffer, (int) strlen(buffer), 0);
-      }
-      else if (pcon->increment && n == (pcon->argc - 1)) {
-         str = DBX_TO_STRING(args[n]);
-         dbx_ibuffer_add(pcon, isolate, nx, str, NULL, 0, 0);
-         pcon->args[nx].type = DBX_TYPE_DOUBLE;
-         pcon->args[nx].num.real = (double) strtod(pcon->args[nx].svalue.buf_addr, NULL);
+         pcon->args[nx].type = DBX_TYPE_INT;
       }
       else {
          pcon->args[nx].type = DBX_TYPE_STR;
@@ -1071,6 +1071,19 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
             dbx_ibuffer_add(pcon, isolate, nx, str, NULL, 0, 0);
          }
       }
+
+      if (pcon->increment && n == (pcon->argc - 1)) { /* v1.3.8 */
+         if (pcon->args[nx].svalue.len_used < 32) {
+            T_STRNCPY(buffer, _dbxso(buffer), pcon->args[nx].svalue.buf_addr, pcon->args[nx].svalue.len_used);
+         }
+         else {
+            buffer[0] = '1';
+            buffer[1] = '\0';
+         }
+         pcon->args[nx].type = DBX_TYPE_DOUBLE;
+         pcon->args[nx].num.real = (double) strtod(buffer, NULL);
+      }
+
       if (pcon->dbtype != DBX_DBTYPE_YOTTADB && context == 0) {
 
          if (pcon->lock == 1) {
@@ -2265,16 +2278,10 @@ int DBX_DBNAME::ClassReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>&
       pcon->args[nx].cvalue.pstr = 0;
 
       if (args[n]->IsInt32()) {
-         pcon->args[nx].type = DBX_TYPE_INT;
          pcon->args[nx].num.int32 = (int) DBX_INT32_VALUE(args[n]);
          T_SPRINTF(buffer, _dbxso(buffer), "%d", pcon->args[nx].num.int32);
          dbx_ibuffer_add(pcon, isolate, nx, str, buffer, (int) strlen(buffer), 0);
-      }
-      else if (pcon->increment && n == (pcon->argc - 1)) {
-         str = DBX_TO_STRING(args[n]);
-         dbx_ibuffer_add(pcon, isolate, nx, str, NULL, 0, 0);
-         pcon->args[nx].type = DBX_TYPE_DOUBLE;
-         pcon->args[nx].num.real = (double) strtod(pcon->args[nx].svalue.buf_addr, NULL);
+         pcon->args[nx].type = DBX_TYPE_INT;
       }
       else {
          pcon->args[nx].type = DBX_TYPE_STR;
@@ -2289,6 +2296,19 @@ int DBX_DBNAME::ClassReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>&
             dbx_ibuffer_add(pcon, isolate, nx, str, NULL, 0, 0);
          }
       }
+
+      if (pcon->increment && n == (pcon->argc - 1)) { /* v1.3.8 */
+         if (pcon->args[nx].svalue.len_used < 32) {
+            T_STRNCPY(buffer, _dbxso(buffer), pcon->args[nx].svalue.buf_addr, pcon->args[nx].svalue.len_used);
+         }
+         else {
+            buffer[0] = '1';
+            buffer[1] = '\0';
+         }
+         pcon->args[nx].type = DBX_TYPE_DOUBLE;
+         pcon->args[nx].num.real = (double) strtod(buffer, NULL);
+      }
+
       rc = dbx_reference(pcon, nx);
    }
 
@@ -4239,7 +4259,9 @@ int ydb_open(DBXCON *pcon)
    printf("\r\np_ydb_get_s($zstatus)=%d; len_used=%d; s=%s\r\n", rc, pdata->len_used, pdata->buf_addr);
 */
 
-   strcpy(buffer, "$zv");
+
+   /* v1.3.8 */
+   strcpy(buffer, "$zyrelease");
    zv.buf_addr = buffer;
    zv.len_used = (int) strlen(buffer);
    zv.len_alloc = 255;
@@ -4250,18 +4272,34 @@ int ydb_open(DBXCON *pcon)
 
    rc = pcon->p_ydb_so->p_ydb_get_s(&zv, 0, NULL, &data);
 
+   if (rc != CACHE_SUCCESS) {
+      strcpy(buffer, "$zversion");
+      zv.buf_addr = buffer;
+      zv.len_used = (int) strlen(buffer);
+      zv.len_alloc = 255;
+
+      data.buf_addr = buffer1;
+      data.len_used = 0;
+      data.len_alloc = 255;
+
+      rc = pcon->p_ydb_so->p_ydb_get_s(&zv, 0, NULL, &data);
+   }
+
    if (data.len_used > 0) {
       data.buf_addr[data.len_used] = '\0';
+   }
+
+   if (rc == CACHE_SUCCESS) {
+      ydb_parse_zv(data.buf_addr, pcon->p_zv);
+      if (pcon->p_zv->dbx_build)
+         sprintf(pcon->p_zv->version, "%d.%d.b%d", pcon->p_zv->majorversion, pcon->p_zv->minorversion, pcon->p_zv->dbx_build);
+      else
+         sprintf(pcon->p_zv->version, "%d.%d", pcon->p_zv->majorversion, pcon->p_zv->minorversion);
    }
 
    if (pcon->p_debug && pcon->p_debug->debug == 1) {
       fprintf(pcon->p_debug->p_fdebug, "\r\n");
       fflush(pcon->p_debug->p_fdebug);
-   }
-
-   if (rc == CACHE_SUCCESS) {
-      ydb_parse_zv(data.buf_addr, pcon->p_zv);
-      sprintf(pcon->p_zv->version, "%d.%d.b%d", pcon->p_zv->majorversion, pcon->p_zv->minorversion, pcon->p_zv->dbx_build);
    }
 
 ydb_open_exit:
@@ -4290,7 +4328,12 @@ int ydb_parse_zv(char *zv, DBXZV * p_ydb_sv)
    p_ydb_sv->vnumber = 0;
 
    result = 0;
-   /* GT.M V6.3-004 Linux x86_64 */
+/*
+   $zversion
+   GT.M V6.3-007 Linux x86_64
+   $zyrelease
+   YottaDB r1.28 Linux x86_64
+*/
 
    p_ydb_sv->dbtype = DBX_DBTYPE_YOTTADB;
 
@@ -4298,6 +4341,10 @@ int ydb_parse_zv(char *zv, DBXZV * p_ydb_sv)
    dbx_version = 0;
    while (*(++ p)) {
       if (*(p - 1) == 'V' && isdigit((int) (*p))) {
+         dbx_version = strtod(p, NULL);
+         break;
+      }
+      if (*(p - 1) == 'r' && isdigit((int) (*p))) {
          dbx_version = strtod(p, NULL);
          break;
       }
@@ -5935,10 +5982,11 @@ int dbx_global_query(DBXCON *pcon, DBXQR *pqr_next, DBXQR *pqr_prev, short dir, 
          rc = pcon->p_ydb_so->p_ydb_node_previous_s(&(pqr_prev->global_name), pqr_prev->keyn, &pqr_prev->key[0], &(pqr_next->keyn), &pqr_next->key[0]);
       }
 
-      if (pqr_next->keyn == YDB_NODE_END) {
+      /* printf("\r\npqr_next->keyn=%d; rc=%d\r\n", pqr_next->keyn, rc); */
+      if (pqr_next->keyn == YDB_NODE_END || rc != YDB_OK) { /* v1.3.8 */
          eod = 1;
          pqr_next->data.svalue.buf_addr[0] = '\0';
-         pqr_next->data.svalue.len_alloc = 0;
+         pqr_next->data.svalue.len_used = 0; /* v1.3.8 */
          pqr_next->keyn = 0;
       }
       if (getdata && !eod) {
