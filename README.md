@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to M-like databases from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-1 November 2019, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+14 November 2019, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v12.
 * [Release Notes](#RelNotes) can be found at the end of this document.
@@ -676,4 +676,9 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Introduce support for direct access to InterSystems SQL and MGSQL.
 * Correct a fault in the InterSystems Cache/IRIS API to globals that resulted in failures - notably in cases where there was a mix of string and numeric data in the global records.
 
+### v1.3.8 (14 November 2019)
+
+* Correct a fault in the Global Increment method.
+* Correct a fault that resulted in query.next() and query.previous() loops not terminating properly (with null) under YottaDB.  This fault affected YottaDB releases after 1.22
+* Modify the version() method so that it returns the version of YottaDB rather than the version of the underlying GT.M engine.
 
