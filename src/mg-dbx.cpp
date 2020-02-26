@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2019 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2020 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -61,6 +61,10 @@ Version 1.3.8 14 November 2019:
    Correct a fault that resulted in query.next() and query.previous() loops not terminating properly (with null) under YottaDB.
    - This fault affected YottaDB releases after 1.22
    Modify the version() method so that it returns the version of YottaDB rather than the version of the underlying GT.M engine.
+
+Version 1.3.9 26 February 2020:
+   Verify that mg-dbx will build and work with Node.js v13.x.x
+   Suppress a number of benign 'cast-function-type' compiler warnings when building on the Raspberry Pi.
 
 */
 
@@ -2375,6 +2379,8 @@ void DBX_DBNAME::ClassMethod(const FunctionCallbackInfo<Value>& args)
    }
 
    rc = pcon->p_isc_so->p_CacheInvokeClassMethod(pcon->cargc - 2);
+
+   /* printf("\r\npcon->cargc=%d; rc=%d", pcon->cargc, rc); */
 
    if (rc == CACHE_SUCCESS) {
       rc = isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
