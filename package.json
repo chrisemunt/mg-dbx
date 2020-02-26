@@ -2,7 +2,7 @@
   "author": "Chris Munt <cmunt@mgateway.com> (http://www.gateway.com/)",
   "name": "mg-dbx",
   "description": "High speed Synchronous and Asynchronous access to M-like databases from Node.js.",
-  "version": "1.3.8",
+  "version": "1.3.9",
   "maintainers": "Chris Munt <cmunt@mgateway.com>",
   "homepage": "https://github.com/chrisemunt/mg-dbx",
   "repository": {

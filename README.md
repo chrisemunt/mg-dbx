@@ -3,9 +3,9 @@
 High speed Synchronous and Asynchronous access to M-like databases from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-14 November 2019, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+26 February 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* Verified to work with Node.js v8 to v12.
+* Verified to work with Node.js v8 to v13.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
 ## Pre-requisites 
@@ -159,7 +159,7 @@ Synchronous:
 
 Asynchronous:
 
-       <global>.set(<key>, callback(<error>, <result>));
+       <global>.get(<key>, callback(<error>, <result>));
       
 Example:
 
@@ -632,7 +632,7 @@ Example:
 
 ## License
 
-Copyright (c) 2018-2019 M/Gateway Developments Ltd,
+Copyright (c) 2018-2020 M/Gateway Developments Ltd,
 Surrey UK.                                                      
 All rights reserved.
  
@@ -681,4 +681,10 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Correct a fault in the Global Increment method.
 * Correct a fault that resulted in query.next() and query.previous() loops not terminating properly (with null) under YottaDB.  This fault affected YottaDB releases after 1.22
 * Modify the version() method so that it returns the version of YottaDB rather than the version of the underlying GT.M engine.
+
+### v1.3.9 (26 February 2020)
+
+* Verify that mg-dbx will build and work with Node.js v13.x.x.
+* Suppress a number of benign 'cast-function-type' compiler warnings when building on the Raspberry Pi.
+
 
