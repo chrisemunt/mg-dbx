@@ -3,9 +3,9 @@
 High speed Synchronous and Asynchronous access to M-like databases from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-26 February 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+21 April 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* Verified to work with Node.js v8 to v13.
+* Verified to work with Node.js v8 to v14.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
 ## Pre-requisites 
@@ -687,4 +687,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Verify that mg-dbx will build and work with Node.js v13.x.x.
 * Suppress a number of benign 'cast-function-type' compiler warnings when building on the Raspberry Pi.
 
+### v1.3.9a (21 April 2020)
+
+* Verify that mg-dbx will build and work with Node.js v14.x.x.
 
