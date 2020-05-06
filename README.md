@@ -827,7 +827,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 * Verify that **mg-dbx** will build and work with Node.js v14.x.x.
 
-### v1.4.11 (6 May 2020)
+### v1.4.10 (6 May 2020)
 
 * Introduce support for Node.js/V8 worker threads (for Node.js v12.x.x. and later).
 	* See the section on 'Using Node.js/V8 worker threads'.
