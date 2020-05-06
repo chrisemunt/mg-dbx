@@ -3,7 +3,7 @@
  ;  ----------------------------------------------------------------------------
  ;  | %zmgsis                                                                  |
  ;  | Author: Chris Munt cmunt@mgateway.com, chris.e.munt@gmail.com            |
- ;  | Copyright (c) 2016-2019 M/Gateway Developments Ltd,                      |
+ ;  | Copyright (c) 2016-2020 M/Gateway Developments Ltd,                      |
  ;  | Surrey UK.                                                               |
  ;  | All rights reserved.                                                     |
  ;  |                                                                          |
@@ -36,12 +36,16 @@ a0 d vers q
  ; v3.0.1:   13 June      2019 (Renamed to %zmgsi and %zmgsis)
  ; v3.1.2:   10 September 2019 (add protocol upgrade for mg_dba library - Go)
  ; v3.2.3:    1 November  2019 (add SQL interface)
+ ; v3.2.4:    8 January   2020 (Add support for $increment to old protocol)
+ ; v3.2.5:   17 January   2020 (Finalise the ifc interface)
+ ; v3.2.6:    3 February  2020 (Send version of DB back to the client)
+ ; v3.2.7:    5 May       2020 (Add the 'Merge' command to the YottaDB API)
  ;
 v() ; version and date
  n v,r,d
  s v="3.2"
- s r=3
- s d="1 November 2019"
+ s r=7
+ s d="5 May 2020"
  q v_"."_r_"."_d
  ;
 vers ; version information
@@ -52,8 +56,11 @@ vers ; version information
  w !
  q
  ;
-isydb() ; see if this is yottadb
- i $zv["GT.M" q 1
+isydb() ; See if this is GT.M or YottaDB
+ n zv
+ s zv=$$getzv()
+ i zv["GT.M" q 1
+ i zv["YottaDB" q 2
  q 0
  ;
 isidb() ; see if this is an intersystems database
@@ -73,6 +80,35 @@ isdsm() ; see if this is dsm
 ism21() ; see if this is m21
  i $zv["M21" q 1
  q 0
+ ;
+getzv() ; Get $ZV
+ ; ISC IRIS:  IRIS for Windows (x86-64) 2019.2 (Build 107U) Wed Jun 5 2019 17:05:10 EDT
+ ; ISC Cache: Cache for Windows (x86-64) 2019.1 (Build 192) Sun Nov 18 2018 23:37:14 EST
+ ; GT.M:      GT.M V6.3-004 Linux x86_64
+ ; YottaDB:   YottaDB r1.22 Linux x86_64
+ new $ztrap set $ztrap="zgoto "_$zlevel_":getzve^%zmgsis"
+ q $zyrelease
+getzve ; Error
+ q $zv
+ ;
+getzvv() ; Get version from $ZV
+ n zv,i,ii,x,version
+ s zv=$$getzv()
+ i $$isidb() d  q version
+ . f i=1:1 s x=$p(zv," ",i) q:x=""  i x["(Build" s version=$p(zv," ",i-1) q
+ . q
+ s x=$$isydb()
+ i x=1 s version=$p($p(zv," V",2)," ",1) q version
+ i x=2 s version=$p($p(zv," r",2)," ",1) q version
+ s version="" f i=1:1 s x=$e(zv,i) q:x=""  i x?1n d  q
+ . f ii=i:1 s x=$e(zv,ii)  q:x=""!('((x?1n)!(x=".")))  s version=version_x
+ . q
+ q version
+ ;
+getsys() ; Get system type
+ n systype
+ s systype=$s($$isidb()>2:"IRIS",$$isidb()=2:"Cache",$$isidb()=1:"ISM",$$ism21():"M21",$$ismsm():"MSM",$$isdsm():"DSM",$$isydb()>1:"YottaDB",$$isydb()=1:"GTM",1:"")
+ q systype
  ;
 vars ; public  system variables
  ;
@@ -213,10 +249,12 @@ inetde ; error
  w $$error()
  q
  ;
-ifc(ctx,request,null1,null2,null3,null4,null5) ; entry point from fixed binding
+ifc(ctx,request,param) ; entry point from fixed binding
  n %zcs,clen,hlen,result,rlen,abyref,anybyref,argc,array,buf,byref,cmnd,dakey,darec,ddata,deod,eod,esize,extra,fun,global,hlen,maxlen,mqinfo,nato,offset,ok,oversize,pcmnd,rdxbuf,rdxptr,rdxrlen,rdxsize,ref,refn,mreq1,req,req1,req2,req3,res,size,sl,slen,sn,sysp,type,uci,var,version,x
  new $ztrap set $ztrap="zgoto "_$zlevel_":ifce^%zmgsis"
  d vars
+ i param["$zv" q $zv
+ i param["dbx" q $$dbx(ctx,$e(request,5),$e(request,6,9999),$$dsize256(request),param)
  s %zcs("ifc")=1
  s argc=1,array=0,nato=0
  k ^%zmg("mpc",$j),^mgsi($j)
@@ -249,14 +287,14 @@ ifce ; error
 ifct ; ifc test
  k
  s req=$$ifct1()
- s res=$$ifc(0,req,"","","","","")
+ s res=$$ifc(0,req,"")
  q
  ;
 ifct1() ; test data
  n
  d vars
- s server="localhost",uci="",vers="1.1.1",smeth=0,cmnd="s"
- s req="phpp^p^"_server_"#"_uci_"#0###"_vers_"#"_smeth_"^"_cmnd_"^00000"_$c(10)
+ s server="localhost",uci="",vers="1.1.1",smeth=0,cmnd="S"
+ s req="PHPp^P^"_server_"#"_uci_"#0###"_vers_"#"_smeth_"^"_cmnd_"^00000"_$c(10)
  s hlen=$l(req)
  ;
  s data="cm",size=$l(data),byref=0,type=ddata
@@ -318,11 +356,11 @@ child3 ; read request
  i x=0 d halt ; client disconnect
  i buf="xDBC" g main^%mgsqln
  i buf?1u.e1"HTTP/"1n1"."1n1c s buf=buf_$c(10) g main^%mgsqlw
- i $e(buf,1,4)="dbx1" d dbx^%zmgsis(buf) g halt
+ i $e(buf,1,4)="dbx1" d dbxnet^%zmgsis(buf) g halt
  s type=0,byref=0 d req1 s @var=buf
  s cmnd=$p(buf,"^",2)
  s hlen=$l(buf),clen=0
- i cmnd="P" s clen=$$dsize($e(buf,hlen-(5-1),hlen),5,62) ;s ^cm($i(^cm))=$e(buf,hlen-(5-1),hlen)
+ i cmnd="P" s clen=$$dsize($e(buf,hlen-(5-1),hlen),5,62)
  s %zcs("client")=$e(buf,4)
  ;d event("request cmnd="_cmnd_"; size="_clen_" ("_$e(buf,hlen-(5-1),hlen)_"); client="_%zcs("client")_" ;header = "_buf)
  s rlen=0
@@ -479,7 +517,7 @@ ayt ; are you there?
  q
  ; 
 dint ; initialise the service link
- n port,%uci,username,password,usrchk
+ n port,%uci,username,password,usrchk,systype,sysver
  s (username,password)=""
  s req=$p($g(@req(1)),"^s^",2,9999)
  ;"^s^version=%s&timeout=%d&nls=%s&uci=%s"
@@ -497,7 +535,8 @@ dint ; initialise the service link
  s x=$$setio(%zcs("nls_trans"))
  s %uci=$$getuci()
  s systype=$$getsys()
- s txt="pid="_$j_"&uci="_%uci_"&server_type="_systype_"&version="_$p($$v(),".",1,3)_"&child_port=0"
+ s sysver=$$getzvv()
+ s txt="pid="_$j_"&uci="_%uci_"&server_type="_systype_"&server_version="_sysver_"&version="_$p($$v(),".",1,3)_"&child_port=0"
  d send(txt)
  q
  ;
@@ -517,7 +556,7 @@ info ; connection info
  d send("<html><head><title>mgsi - connection test</title></head><body bgcolor=#ffffcc>")
  d send("<h2>mgsi - connection test successful</h2>")
  d send("<table border=1>")
- d send("<tr><td>"_$$getsys()_" version:</td><td><b>"_$zv_"<b><tr>")
+ d send("<tr><td>"_$$getsys()_" version:</td><td><b>"_$$getzv()_"<b><tr>")
  d send("<tr><td>uci:</td><td><b>"_$$getuci()_"<b><tr>")
  d send("</table>")
  d send("</body></html>")
@@ -819,6 +858,7 @@ php ; serve request from m_client
  i cmnd="D" d data
  i cmnd="O" d order
  i cmnd="P" d previous
+ i cmnd="I" d increment
  i cmnd="M" d mergedb
  i cmnd="m" d mergephp
  i cmnd="H" d html
@@ -893,6 +933,14 @@ previous ; global reverse order
  x "s res=$o("_ref_",-1)"
  d res
  q
+ ;
+increment ; Global increment
+ i argc<3 q
+ s argz=argc-1
+ s fun=0 d ref
+ x "s res=$i("_ref_","_"req"_argc_")"
+ d res
+ Q
  ;
 mergedb ; global merge from m_client
  i argc<3 q
@@ -978,7 +1026,7 @@ webex(cgi,data)
  s req=req_"Connection: close"_$c(13,10)
  s req=req_$c(13,10)
  w req
- w "Server="_$zv_$c(13,10)
+ w "Server="_$$getzv()_$c(13,10)
  w "Mgsi_Version="_$$v()_$c(13,10)
  w $c(13,10)
  s x="" f  s x=$o(cgi(x)) q:x=""  w x_"="_$g(cgi(x))_$c(13,10)
@@ -996,7 +1044,7 @@ ws(cgi,data)
  . n i
  . s status=$$wsread^%zmgsis(.data,timeout)
  . i status=-2 s data="exit" q
- . i status=-1 s data="timeout event ("_timeout_"): $h="_$h_"; $zv="_$zv
+ . i status=-1 s data="timeout event ("_timeout_"): $h="_$h_"; $zv="_$$getzv()
  . i data="exit" q
  . s status=$$wswrite^%zmgsis(data)
  . q
@@ -1148,6 +1196,7 @@ ref ; global reference
  s a1=$g(@req(2))
  s strt=2 i a1?1"^"."^" s strt=strt+1
  s ref=@req(strt) i argc=strt q
+ i strt'<argz q
  s ref=ref_"("
  s com="" f i=strt+1:1:argz s refn=refn_","_req(i),ref=ref_com_$s(fun:".",1:"")_req(i),com=","
  s ref=ref_")"
@@ -1280,10 +1329,6 @@ send(data) ; send data
  s res(n)=$g(res(n))_data
  q
  ;
-getsys() ; get system type
- s systype=$s($$isidb()>1:"cache",$$isidb()=1:"ism",$$ism21():"m21",$$ismsm():"msm",$$isdsm():"dsm",$$isydb():"gtm",1:"")
- q systype
- ;
 error() ; get last error
  i $$isydb() q $zs
  q $ze
@@ -1403,22 +1448,13 @@ sst(%0) ; save symbol table
 sste ; error
  q 0
  ;
-dbx(buf) ; new wire protocol for access to M
- n %oref,abyref,argc,array,cmnd,conc,dakey,darec,ddata,deod,extra,global,i,maxlen,mqinfo,nato,offset,ok,oref,oversize,pcmnd,port,pport,rdxbuf,rdxptr,rdxrlen,rdxsize,req,res,sl,slen,sn,sort,type,uci,var,version,x
- s uci=$p(buf,"~",2)
- i uci'="" d uci(uci)
- s res=$zv
- s res=$$esize256($l(res))_"0"_res
- w res d flush
-dbx1 ; test
- r head#5
- s len=$$dsize256(head)
- s len=len-5
- s cmnd=$e(head,5)
- r data#len
+ 
+dbx(ctx,cmnd,data,len,param) ; entry point from fixed binding
+ n %r,obufsize,idx,offset,rc,sort,res,ze,oref,type
+ new $ztrap set $ztrap="zgoto "_$zlevel_":dbxe^%zmgsis"
  s obufsize=$$dsize256($e(data,1,4))
  s idx=$$dsize256($e(data,6,9))
- k %r s offset=11 f %r=1:1:64 s %r(%r,0)=$$dsize256($e(data,offset,offset+3)) d  i '$d(%r(%r)) s %r=%r-1 q
+ k %r s offset=11 f %r=1:1:7 s %r(%r,0)=$$dsize256($e(data,offset,offset+3)) d  i '$d(%r(%r)) s %r=%r-1 q
  . s %r(%r,1)=$a(data,offset+4)\20,%r(%r,2)=$a(data,offset+4)#20 i %r(%r,1)=9 k %r(%r) q
  . s %r(%r)=$e(data,offset+5,offset+5+(%r(%r,0)-1))
  . s offset=offset+5+%r(%r,0)
@@ -1428,8 +1464,27 @@ dbx1 ; test
  i rc=-1 s sort=11 ; error
  s type=1 ; string
  s res=$$esize256($l(res))_$c((sort*20)+type)_res
+ q res
+dbxe ; Error
+ s ze=$$error()
+ q -1
+ ;
+dbxnet(buf) ; new wire protocol for access to M
+ n %oref,abyref,argc,array,cmnd,conc,dakey,darec,ddata,deod,extra,global,i,maxlen,mqinfo,nato,offset,ok,oref,oversize,pcmnd,port,pport,rdxbuf,rdxptr,rdxrlen,rdxsize,req,res,sl,slen,sn,sort,type,uci,var,version,x
+ s uci=$p(buf,"~",2)
+ i uci'="" d uci(uci)
+ s res=$zv
+ s res=$$esize256($l(res))_"0"_res
  w res d flush
- g dbx1
+dbxnet1 ; test
+ r head#5
+ s len=$$dsize256(head)
+ s len=len-5
+ s cmnd=$e(head,5)
+ r data#len
+ s res=$$dbx(0,cmnd,data,len,param)
+ w res d flush
+ g dbxnet1
  ;
 dbxcmnd(%r,%oref,cmnd,res) ; Execute command
  new $ztrap set $ztrap="zgoto "_$zlevel_":dbxcmnde^%zmgsis"
@@ -1438,18 +1493,29 @@ dbxcmnd(%r,%oref,cmnd,res) ; Execute command
  i cmnd=2 s res=0 q 0
  i cmnd=3 s res=$$getuci() q 0
  i cmnd=4 d uci(%r(1)) s res=$$getuci() q 0
- i cmnd=11 s @(%r(1)_$$dbxref(.%r,2,%r-1,0))=%r(%r),res=0 q 0
- i cmnd=12 s res=$g(@(%r(1)_$$dbxref(.%r,2,%r,0))) q 0
- i cmnd=13 s res=$o(@(%r(1)_$$dbxref(.%r,2,%r,0))) q 0
- i cmnd=14 s res=$o(@(%r(1)_$$dbxref(.%r,2,%r,0)),-1) q 0
- i cmnd=15 k @(%r(1)_$$dbxref(.%r,2,%r,0)) s res=0 q 0
- i cmnd=16 s res=$d(@(%r(1)_$$dbxref(.%r,2,%r,0))) q 0
+ i cmnd=11 s @($$dbxglo(%r(1))_$$dbxref(.%r,2,%r-1,0))=%r(%r),res=0 q 0
+ i cmnd=12 s res=$g(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0))) q 0
+ i cmnd=13 s res=$o(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0))) q 0
+ i cmnd=14 s res=$o(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0)),-1) q 0
+ i cmnd=15 k @($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0)) s res=0 q 0
+ i cmnd=16 s res=$d(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0))) q 0
+ i cmnd=17 s res=$i(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r-1,0)),%r(%r)) q 0
+ i cmnd=20 d  q 0
+ . n i1,i2,r1,r2
+ . s (i1,i2)=1 f i=2:1 q:'$d(%r(i))  i $g(%r(i,1))=3 s i2=i q
+ . s r1=$$dbxglo(%r(i1))_$$dbxref(.%r,i1+1,i2-1,0)
+ . s r2=$$dbxglo(%r(i2))_$$dbxref(.%r,i2+1,%r,0)
+ . m @r1=@r2
+ . q
  i cmnd=31 s res=$$dbxfun(.%r,"$$"_%r(1)_"("_$$dbxref(.%r,2,%r,1)_")") q 0
  s res="<SYNTAX>"
  q -1
 dbxcmnde ; Error
  s ze=$$error()
  q -1
+ ;
+dbxglo(glo) ; Generate global name
+ q $s($e(glo,1)="^":glo,1:"^"_glo)
  ;
 dbxref(%r,strt,end,ctx) ; Generate reference
  n i,ref,com
