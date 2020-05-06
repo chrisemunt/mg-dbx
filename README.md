@@ -3,12 +3,24 @@
 High speed Synchronous and Asynchronous access to M-like databases from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-21 April 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+6 May 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v14.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
-## Pre-requisites 
+Contents
+
+* [Pre-requisites](#PreReq") 
+* [Installing mg-dbx](#Install)
+* [Connecting to the database](#Connect)
+* [Invocation of database commands](#DBCommands)
+* [Invocation of database functions](#DBFunctions)
+* [Direct access to InterSystems classes (IRIS and Cache)](#DBClasses)
+* [Direct access to SQL: MGSQL and InterSystems SQL (IRIS and Cache)](#DBSQL)
+* [Using Node.js/V8 worker threads](#Threads)
+* [License](#License)
+
+## <a name="PreReq"></a> Pre-requisites 
 
 **mg-dbx** is a Node.js addon written in C++.  It is distributed as C++ source code and the NPM installation procedure will expect a C++ compiler to be present on the target system.
 
@@ -37,7 +49,7 @@ Alternatively there are built Windows x64 binaries available from:
 
 * [https://github.com/chrisemunt/mg-dbx/blob/master/bin/winx64](https://github.com/chrisemunt/mg-dbx/blob/master/bin/winx64)
 
-## Installing mg-dbx
+## <a name="Install"></a> Installing mg-dbx
 
 Assuming that Node.js is already installed and a C++ compiler is available to the installation process:
 
@@ -45,13 +57,81 @@ Assuming that Node.js is already installed and a C++ compiler is available to th
 
 This command will create the **mg-dbx** addon (*mg-dbx.node*).
 
-## Documentation
+### Installing the M support routines
+
+The M support routines are required for:
+
+* Direct access to SQL.
+* The Merge command under YottaDB.
+
+Two M routines need to be installed (%zmgsi and %zmgsis).  These can be found in the GitHub source code repository ([https://github.com/chrisemunt/mg-dbx](https://github.com/chrisemunt/mg-dbx))
+
+#### Installation for YottaDB
+
+The instructions given here assume a standard 'out of the box' installation of **YottaDB** deployed in the following location:
+
+       /usr/local/lib/yottadb/r122
+
+The primary default location for routines:
+
+       /root/.yottadb/r1.22_x86_64/r
+
+Copy all the routines (i.e. all files with an 'm' extension) held in the GitHub **/yottadb** directory to:
+
+       /root/.yottadb/r1.22_x86_64/r
+
+Change directory to the following location and start a **YottaDB** command shell:
+
+       cd /usr/local/lib/yottadb/r122
+       ./ydb
+
+Link all the **zmgsi** routines and check the installation:
+
+       do ylink^%zmgsi
+
+       do ^%zmgsi
+
+       M/Gateway Developments Ltd - Service Integration Gateway
+       Version: 3.2; Revision 7 (5 May 2020)
+
+Note that the version of **zmgsi** is successfully displayed.
+
+Finally, add the following lines to the interface file (**cm.ci** in the example used in the db.open() method).
+
+       sqlemg: ydb_char_t * sqlemg^%zmgsis(I:ydb_char_t*, I:ydb_char_t *, I:ydb_char_t *)
+       sqlrow: ydb_char_t * sqlrow^%zmgsis(I:ydb_char_t*, I:ydb_char_t *, I:ydb_char_t *)
+       sqldel: ydb_char_t * sqldel^%zmgsis(I:ydb_char_t*, I:ydb_char_t *)
+       ifc_zmgsis: ydb_string_t * ifc^%zmgsis(I:ydb_string_t*, I:ydb_string_t *, I:ydb_string_t*)
+
+
+#### Installation for other M systems
+
+For InterSystems IRIS and Cache, log in to the Manager UCI and install the **zmgsi** routines held in either **/m/zmgsi\_cache.xml** or **/m/zmgsi\_iris.xml** as appropriate.
+
+       do $system.OBJ.Load("/m/zmgsi_cache.xml","ck")
+
+Alternatively, for other M systems, log in to the Manager UCI and, using the %RI utility (or similar) load the **zmgsi** routines held in **/m/zmgsi.ro**.
+
+Change to your development UCI and check the installation:
+
+       do ^%zmgsi
+
+       M/Gateway Developments Ltd - Service Integration Gateway
+       Version: 3.2; Revision 7 (5 May 2020)
+
+## <a name="Connect"></a> Connecting to the database
 
 Most **mg-dbx** methods are capable of operating either synchronously or asynchronously. For an operation to complete asynchronously, simply supply a suitable callback as the last argument in the call.
 
 The first step is to add **mg-dbx** to your Node.js script
 
        var dbx = require('mg-dbx').dbx;
+
+And optionally (as required):
+
+       var mglobal = require('mg-dbx').mglobal;
+       var mcursor = require('mg-dbx').mcursor;
+       var mclass = require('mg-dbx').mclass;
 
 ### Create a Server Object
 
@@ -126,10 +206,26 @@ Example 2 (Change the current Namespace):
 
 * If the operation is successful this method will echo back the new Namespace name.  If not successful, the method will return the name of the current (unchanged) Namespace.
 
- 
-### Invocation of database commands
+### Return the version of mg-dbx
 
-#### Register a global name (and fixed key)
+       var result = db.version();
+
+Example:
+
+       console.log("\nmg-dbx Version: " + db.version());
+
+### Close database connection
+
+       db.close();
+ 
+
+## <a name="DBCommands"></a> Invocation of database commands
+
+### Register a global name (and fixed key)
+
+
+       global = new mglobal(db, <global_name>[, <fixed_key>]);
+Or:
 
        global = db.mglobal(<global_name>[, <fixed_key>]);
 
@@ -137,7 +233,7 @@ Example (using a global named "Person"):
 
        var person = db.mglobal("Person");
 
-#### Set a record
+### Set a record
 
 Synchronous:
 
@@ -151,7 +247,7 @@ Example:
 
        person.set(1, "John Smith");
 
-#### Get a record
+### Get a record
 
 Synchronous:
 
@@ -165,7 +261,7 @@ Example:
 
        var name = person.get(1);
 
-#### Delete a record
+### Delete a record
 
 Synchronous:
 
@@ -180,7 +276,7 @@ Example:
        var name = person.delete(1);
 
 
-#### Check whether a record is defined
+### Check whether a record is defined
 
 Synchronous:
 
@@ -195,7 +291,7 @@ Example:
        var name = person.defined(1);
 
 
-#### Parse a set of records (in order)
+### Parse a set of records (in order)
 
 Synchronous:
 
@@ -213,7 +309,7 @@ Example:
        }
 
 
-#### Parse a set of records (in reverse order)
+### Parse a set of records (in reverse order)
 
 Synchronous:
 
@@ -231,7 +327,7 @@ Example:
        }
 
 
-#### Increment the value of a global node
+### Increment the value of a global node
 
 Synchronous:
 
@@ -246,7 +342,7 @@ Example (increment the value of the "counter" node by 1.5 and return the new val
        var result = person.increment("counter", 1.5);
 
 
-#### Lock a global node
+### Lock a global node
 
 Synchronous:
 
@@ -263,7 +359,7 @@ Example (lock global node '1' with a timeout of 30 seconds):
 * Note: Specify the timeout value as '-1' for no timeout (i.e. wait until the global node becomes available to lock).
 
 
-#### Unlock a (previously locked) global node
+### Unlock a (previously locked) global node
 
 Synchronous:
 
@@ -278,7 +374,37 @@ Example (unlock global node '1'):
        var result = person.unlock(1);
 
 
-#### Reset a global name (and fixed key)
+### Merge (or copy) part of one global to another
+
+In order to use the 'Merge' facility with YottaDB the M support routines should be installed.
+
+Synchronous (merge from global2 to global1):
+
+       var result = <global1>.merge([<key1>,] <global2> [, <key2>]);
+
+Asynchronous (merge from global2 to global1):
+
+       <global1>.defined([<key1>,] <global2> [, <key2>], callback(<error>, <result>));
+      
+Example 1 (merge ^MyGlobal2 to ^MyGlobal1):
+
+       global1 = new mglobal(db, 'MyGlobal1');
+       global2 = new mglobal(db, 'MyGlobal2');
+       global1.merge(global2);
+
+Example 2 (merge ^MyGlobal2(0) to ^MyGlobal1(1)):
+
+       global1 = new mglobal(db, 'MyGlobal1', 1);
+       global2 = new mglobal(db, 'MyGlobal2', 0);
+       global1.merge(global2);
+
+Alternatively:
+
+       global1 = new mglobal(db, 'MyGlobal1');
+       global2 = new mglobal(db, 'MyGlobal2');
+       global1.merge(1, global2, 0);
+
+### Reset a global name (and fixed key)
 
        <global>.reset(<global_name>[, <fixed_key>]);
 
@@ -293,13 +419,16 @@ Example:
        do_work ...
 
  
-### Cursor based data retrieval
+## <a name="Cursors"></a> Cursor based data retrieval
 
 This facility provides high-performance techniques for traversing records held in database globals. 
 
-#### Specifying the query
+### Specifying the query
 
 The first task is to specify the 'query' for the global traverse.
+
+       query = new mcursor(db, {global: <global_name>, key: [<seed_key>]}[, <options>]);
+Or:
 
        query = db.mglobalquery({global: <global_name>, key: [<seed_key>]}[, <options>]);
 
@@ -315,7 +444,7 @@ Example (return all keys and names from the 'Person' global):
 
        query = db.mglobalquery({global: "Person", key: [""]}, {multilevel: false, getdata: true});
 
-#### Traversing the dataset
+### Traversing the dataset
 
 In key order:
 
@@ -359,7 +488,7 @@ Example 4 (return all key values and names from the 'Person' global, including a
 * M programmers will recognise this last example as the M **$Query()** command.
  
 
-#### Traversing the global directory (return a list of global names)
+### Traversing the global directory (return a list of global names)
 
        query = db.mglobalquery({global: <seed_global_name>}, {globaldirectory: true});
 
@@ -371,7 +500,7 @@ Example (return all global names held in the current directory)
        }
 
 
-### Invocation of database functions
+## <a name="DBFunctions"></a> Invocation of database functions
 
 Synchronous:
 
@@ -393,11 +522,14 @@ JavaScript invocation:
       result = db.function("add^math", 2, 3);
 
 
-### Direct access to InterSystems classes (IRIS and Cache)
+## <a name="DBClasses"></a> Direct access to InterSystems classes (IRIS and Cache)
 
-#### Invocation of a ClassMethod
+### Invocation of a ClassMethod
 
 Synchronous:
+
+       result = new mclass(db, <class_name>, <classmethod_name>, <parameters>);
+Or:
 
        result = db.classmethod(<class_name>, <classmethod_name>, <parameters>);
 
@@ -409,7 +541,7 @@ Example (Encode a date to internal storage format):
 
        result = db.classmethod("%Library.Date", "DisplayToLogical", "10/10/2019");
 
-#### Creating and manipulating instances of objects
+### Creating and manipulating instances of objects
 
 The following simple class will be used to illustrate this facility.
 
@@ -424,7 +556,7 @@ The following simple class will be used to illustrate this facility.
           }
        }
 
-#### Create an entry for a new Person
+### Create an entry for a new Person
 
        person = db.classmethod("User.Person", "%New");
 
@@ -438,7 +570,7 @@ Save the object record:
 
        result = person.method("%Save");
 
-#### Retrieve an entry for an existing Person
+### Retrieve an entry for an existing Person
 
 Retrieve data for object %Id of 1.
  
@@ -455,7 +587,7 @@ Calculate person's age at a particular date:
        today = db.classmethod("%Library.Date", "DisplayToLogical", "10/10/2019");
        var age = person.method("Age", today);
 
-#### Reusing an object container
+### Reusing an object container
 
 Once created, it is possible to reuse containers holding previously instantiated objects using the **reset()** method.  Using this technique helps to reduce memory usage in the Node.js environment.
 
@@ -468,63 +600,18 @@ Example 2 Reset a container to hold an existing instance (object %Id of 2):
        person.reset("User.Person", "%OpenId", 2);
 
 
-### Direct access to SQL: MGSQL and InterSystems SQL (IRIS and Cache)
+## <a name="DBSQL"></a> Direct access to SQL: MGSQL and InterSystems SQL (IRIS and Cache)
 
 **mg-dbx** provides direct access to the Open Source MGSQL engine ([https://github.com/chrisemunt/mgsql](https://github.com/chrisemunt/mgsql)) and InterSystems SQL (IRIS and Cache).
 
-In order to use this facility two M routines need to be installed (%zmgsi and %zmgsis).  These can be found in the GitHub source code repository ([https://github.com/chrisemunt/mg-dbx](https://github.com/chrisemunt/mg-dbx))
+In order to use this facility the M support routines should be installed.
 
-
-#### Installation for YottaDB
-
-The instructions given here assume a standard 'out of the box' installation of **YottaDB** deployed in the following location:
-
-       /usr/local/lib/yottadb/r122
-
-The primary default location for routines:
-
-       /root/.yottadb/r1.22_x86_64/r
-
-Copy all the routines (i.e. all files with an 'm' extension) held in the GitHub **/yottadb** directory to:
-
-       /root/.yottadb/r1.22_x86_64/r
-
-Change directory to the following location and start a **YottaDB** command shell:
-
-       cd /usr/local/lib/yottadb/r122
-       ./ydb
-
-Link all the **zmgsi** routines and check the installation:
-
-       do ylink^%zmgsi
-
-       do ^%zmgsi
-
-       M/Gateway Developments Ltd - Service Integration Gateway
-       Version: 3.2; Revision 3 (1 November 2019)
-
-Note that the version of **zmgsi** is successfully displayed.
-
-Finally, add the following lines to the interface file (**cm.ci** in the example used in the db.open() method).
-
-       sqlemg: ydb_char_t * sqlemg^%zmgsis(I:ydb_char_t*, I:ydb_char_t *, I:ydb_char_t *)
-       sqlrow: ydb_char_t * sqlrow^%zmgsis(I:ydb_char_t*, I:ydb_char_t *, I:ydb_char_t *)
-       sqldel: ydb_char_t * sqldel^%zmgsis(I:ydb_char_t*, I:ydb_char_t *)
-
-
-#### Installation for other M systems
-
-Log in to the Manager UCI and, using the %RI utility (or similar) load the **zmgsi** routines held in **/m/zmgsi.ro**.  Change to your development UCI and check the installation:
-
-       do ^%zmgsi
-
-       M/Gateway Developments Ltd - Service Integration Gateway
-       Version: 3.2; Revision 3 (1 November 2019)
-
-
-#### Specifying the SQL query
+### Specifying the SQL query
 
 The first task is to specify the SQL query.
+
+       query = new mcursor(db, {sql: <sql_statement>[, type: <sql_engine>]);
+Or:
 
        query = db.sql({sql: <sql_statement>[, type: <sql_engine>]);
 
@@ -538,7 +625,7 @@ Example 2 (using InterSystems SQL):
        query = db.sql({sql: "select * from SQLUser.person", type: "Cache"});
 
 
-#### Execute an SQL query
+### Execute an SQL query
 
 Synchronous:
 
@@ -568,7 +655,7 @@ Example 2 (unsuccessful execution):
        }
 
 
-#### Traversing the returned dataset (SQL 'select' queries)
+### Traversing the returned dataset (SQL 'select' queries)
 
 In result-set order:
 
@@ -593,7 +680,7 @@ The output for each iteration is a row of the generated SQL result-set.  For exa
            "name": "John Smith",
        }
 
-#### SQL cleanup
+### SQL cleanup
 
 For 'select' queries that generate a result-set it is good practice to invoke the 'cleanup' method at the end to delete the result-set held in the database.
 
@@ -605,7 +692,7 @@ Asynchronous:
 
        <query>.cleanup(callback(<error>, <result>));
 
-#### Reset an SQL container with a new SQL Query
+### Reset an SQL container with a new SQL Query
 
 Synchronous:
 
@@ -616,21 +703,70 @@ Asynchronous:
        <query>.reset({sql: <sql_statement>[, type: <sql_engine>], callback(<error>, <result>));
 
 
-### Return the version of mg-dbx
+## <a name="Threads"></a> Using Node.js/V8 worker threads
 
-       var result = db.version();
+**mg-dbx** functionality can now be used with Node.js/V8 worker threads.  This enhancement is available with Node.js v12 (and later).
 
-Example:
+Use the following constructs for instantiating **mg-dbx** objects in multi-threaded applications:
 
-       console.log("\nmg-dbx Version: " + db.version());
+        // Use:
+        var <global> = new mglobal(<db>, <global>);
+        // Instead of:
+	    var <global> = <db>.mglobal(<global>);
+
+        // Use:
+        var <cursor> = new mcursor(<db>, <global_query>);
+        // Instead of:
+        var <cursor> = <db>.mglobalquery(<global_query>)
+
+        // Use:
+        var <class> = new mclass(<db>, <classmethod>);
+        // Instead of:
+        var <class> = <db>.classmethod(<classmethod>);
+
+        // Use:
+        var <sql> = new mcursor(<db>, <sqlquery>);
+        // Instead of:
+        var <sql> = <db>.sql(<sqlquery>);
 
 
+The following scheme illustrates how **mg-dbx** should be used in threaded Node.js applications.
 
-### Close database connection
+       const { Worker, isMainThread, parentPort, threadId } = require('worker_threads');
 
-       db.close();
+       if (isMainThread) {
+          // start the threads
+          const worker1 = new Worker(__filename);
+          const worker2 = new Worker(__filename);
 
-## License
+          // process messages received from threads
+          worker1.on('message', (message) => {
+             console.log(message);
+          });
+          worker2.on('message', (message) => {
+             console.log(message);
+          });
+       } else {
+          var dbx = require('mg-dbx').dbx;
+          // And as required ...
+          var mglobal = require('mg-dbx').mglobal;
+          var mcursor = require('mg-dbx').mcursor;
+          var mclass = require('mg-dbx').mclass;
+
+          var db = new dbx();
+          db.open(<parameters>);
+
+          var global = new mglobal(db, <global>);
+
+          // do some work
+
+          var result = db.close();
+          // tell the parent that we're done
+          parentPort.postMessage("threadId=" + threadId + " Done");
+       }
+
+
+## <a name="License"></a> License
 
 Copyright (c) 2018-2020 M/Gateway Developments Ltd,
 Surrey UK.                                                      
@@ -684,10 +820,16 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 ### v1.3.9 (26 February 2020)
 
-* Verify that mg-dbx will build and work with Node.js v13.x.x.
+* Verify that **mg-dbx** will build and work with Node.js v13.x.x.
 * Suppress a number of benign 'cast-function-type' compiler warnings when building on the Raspberry Pi.
 
 ### v1.3.9a (21 April 2020)
 
-* Verify that mg-dbx will build and work with Node.js v14.x.x.
+* Verify that **mg-dbx** will build and work with Node.js v14.x.x.
 
+### v1.4.11 (6 May 2020)
+
+* Introduce support for Node.js/V8 worker threads (for Node.js v12.x.x. and later).
+	* See the section on 'Using Node.js/V8 worker threads'.
+* Introduce support for the M Merge command.
+* Correct a fault in the mcursor 'Reset' method.
