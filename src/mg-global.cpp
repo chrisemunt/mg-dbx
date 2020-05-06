@@ -32,7 +32,7 @@ using namespace node;
 
 Persistent<Function> mglobal::constructor;
 
-mglobal::mglobal(double value) : value_(value)
+mglobal::mglobal(int value) : dbx_count(value)
 {
 }
 
@@ -44,17 +44,23 @@ mglobal::~mglobal()
 
 
 #if DBX_NODE_VERSION >= 100000
-void mglobal::Init(Local<Object> target)
+void mglobal::Init(Local<Object> exports)
 #else
-void mglobal::Init(Handle<Object> target)
+void mglobal::Init(Handle<Object> exports)
 #endif
 {
 #if DBX_NODE_VERSION >= 120000
-   Isolate* isolate = target->GetIsolate();
-
+   Isolate* isolate = exports->GetIsolate();
+   Local<Context> icontext = isolate->GetCurrentContext();
+/*
+   Local<ObjectTemplate> mglobal_data_tpl = ObjectTemplate::New(isolate);
+   mglobal_data_tpl->SetInternalFieldCount(1);
+   Local<Object> mglobal_data = mglobal_data_tpl->NewInstance(icontext).ToLocalChecked();
+*/
+  /* Prepare constructor template */
    Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
    tpl->SetClassName(String::NewFromUtf8(isolate, "mglobal", NewStringType::kNormal).ToLocalChecked());
-   tpl->InstanceTemplate()->SetInternalFieldCount(1);
+   tpl->InstanceTemplate()->SetInternalFieldCount(3); /* v1.4.10 */
 #else
    Isolate* isolate = Isolate::GetCurrent();
 
@@ -66,21 +72,25 @@ void mglobal::Init(Handle<Object> target)
 
    /* Prototypes */
 
-   DBX_NODE_SET_PROTOTYPE_METHODC("get", Get);
-   DBX_NODE_SET_PROTOTYPE_METHODC("set", Set);
-   DBX_NODE_SET_PROTOTYPE_METHODC("defined", Defined);
-   DBX_NODE_SET_PROTOTYPE_METHODC("delete", Delete);
-   DBX_NODE_SET_PROTOTYPE_METHODC("next", Next);
-   DBX_NODE_SET_PROTOTYPE_METHODC("previous", Previous);
-   DBX_NODE_SET_PROTOTYPE_METHODC("increment", Increment);
-   DBX_NODE_SET_PROTOTYPE_METHODC("lock", Lock);
-   DBX_NODE_SET_PROTOTYPE_METHODC("unlock", Unlock);
-   DBX_NODE_SET_PROTOTYPE_METHODC("reset", Reset);
-   DBX_NODE_SET_PROTOTYPE_METHODC("_close", Close);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "get", Get);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "set", Set);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "defined", Defined);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "delete", Delete);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "next", Next);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "previous", Previous);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "increment", Increment);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "lock", Lock);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "unlock", Unlock);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "merge", Merge);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "reset", Reset);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "_close", Close);
 
 #if DBX_NODE_VERSION >= 120000
-   Local<Context> icontext = isolate->GetCurrentContext();
+/*
+   mglobal_data->SetInternalField(0, constructor);
+*/
    constructor.Reset(isolate, tpl->GetFunction(icontext).ToLocalChecked());
+   exports->Set(icontext, String::NewFromUtf8(isolate, "mglobal", NewStringType::kNormal).ToLocalChecked(), tpl->GetFunction(icontext).ToLocalChecked()).FromJust();
 #else
    constructor.Reset(isolate, tpl->GetFunction());
 #endif
@@ -95,25 +105,49 @@ void mglobal::New(const FunctionCallbackInfo<Value>& args)
    Local<Context> icontext = isolate->GetCurrentContext();
 #endif
    HandleScope scope(isolate);
-   int len;
-   char *cls_info;
-   char buffer[256], cls_str[256];
-   Local<String> cls_info_str;
+   int rc, fc, mn, argc, otype;
+   DBX_DBNAME *c = NULL;
+   Local<Object> obj;
 
-   DBX_WRITE_UTF8(DBX_TO_STRING(args[0]), cls_str);
-   cls_info_str = DBX_TO_STRING(args[1]);
-   len = (int) cls_info_str->Length();
+   /* 1.4.10 */
+   argc = args.Length();
+   if (argc > 0) {
+      obj = dbx_is_object(args[0], &otype);
+      if (otype) {
+         fc = obj->InternalFieldCount();
+         if (fc == 3) {
+            mn = DBX_INT32_VALUE(obj->GetInternalField(2));
+            if (mn == DBX_MAGIC_NUMBER) {
+               c = ObjectWrap::Unwrap<DBX_DBNAME>(obj);
+            }
+         }
+      }
+   }
 
-   cls_info = (char *) dbx_malloc(sizeof(char) * (len + 2048), 1001);
-   DBX_WRITE_UTF8(cls_info_str, cls_info);
-   cls_info[len] = '\0';
-
-   T_STRCPY(buffer, _dbxso(buffer), "");
    if (args.IsConstructCall()) {
       /* Invoked as constructor: `new mglobal(...)` */
-      double value = args[0]->IsUndefined() ? 0 : DBX_NUMBER_VALUE(args[0]);
+      int value = args[0]->IsUndefined() ? 0 : DBX_INT32_VALUE(args[0]);
       mglobal * obj = new mglobal(value);
+      obj->c = NULL;
+
+      if (c) { /* 1.4.10 */
+         if (c->pcon == NULL) {
+            isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "No Connection to the database", 1)));
+            return;
+         }
+         c->pcon->argc = argc;
+         obj->c = c;
+         obj->pkey = NULL;
+         obj->global_name[0] = '\0';
+         rc = dbx_global_reset(args, isolate, (void *) obj, 1, 1);
+         if (rc < 0) {
+            isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The mglobal::New() method takes at least one argument (the global name)", 1)));
+            return;
+         }
+      }
+
       obj->Wrap(args.This());
+      args.This()->SetInternalField(2, DBX_INTEGER_NEW(DBX_MAGIC_NUMBER_MGLOBAL)); /* v1.4.10 */
       args.GetReturnValue().Set(args.This());
 /*
       Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, obj->New);
@@ -124,56 +158,9 @@ void mglobal::New(const FunctionCallbackInfo<Value>& args)
       const int argc = 1;
       Local<Value> argv[argc] = { args[0] };
       Local<Function> cons = Local<Function>::New(isolate, constructor);
-
-#if DBX_NODE_VERSION >= 100000
       args.GetReturnValue().Set(cons->NewInstance(isolate->GetCurrentContext(), argc, argv).ToLocalChecked());
-#else
-      args.GetReturnValue().Set(cons->NewInstance(isolate->GetCurrentContext(), argc, argv).ToLocalChecked());
-#endif
    }
 
-   dbx_free((void *) cls_info, 1001);
-
-}
-
-
-#if DBX_NODE_VERSION >= 100000
-void mglobal::dbx_set_prototype_method(Local<FunctionTemplate> t, FunctionCallback callback, const char* name, const char* data)
-#else
-void mglobal::dbx_set_prototype_method(Handle<FunctionTemplate> t, FunctionCallback callback, const char* name, const char* data)
-#endif
-{
-#if DBX_NODE_VERSION >= 100000
-
-   v8::Isolate* isolate = v8::Isolate::GetCurrent();
-   v8::HandleScope handle_scope(isolate);
-   v8::Local<v8::Signature> s = v8::Signature::New(isolate, t);
-
-#if DBX_NODE_VERSION >= 120000
-   Local<String> data_str = String::NewFromUtf8(isolate, data, NewStringType::kNormal).ToLocalChecked();
-#else
-   Local<String> data_str = String::NewFromUtf8(isolate, data);
-#endif
-
-#if 0
-   v8::Local<v8::FunctionTemplate> tx = v8::FunctionTemplate::New(isolate, callback, v8::Local<v8::Value>(), s);
-#else
-   v8::Local<v8::FunctionTemplate> tx = v8::FunctionTemplate::New(isolate, callback, data_str, s);
-#endif
-
-#if DBX_NODE_VERSION >= 120000
-   v8::Local<v8::String> fn_name = v8::String::NewFromUtf8(isolate, name, NewStringType::kNormal).ToLocalChecked();
-#else
-   v8::Local<v8::String> fn_name = v8::String::NewFromUtf8(isolate, name);
-#endif
-
-   tx->SetClassName(fn_name);
-   t->PrototypeTemplate()->Set(fn_name, tx);
-#else
-   NODE_SET_PROTOTYPE_METHOD(t, name, callback);
-#endif
-
-   return;
 }
 
 
@@ -192,13 +179,9 @@ mglobal * mglobal::NewInstance(const FunctionCallbackInfo<Value>& args)
 
    argv[0] = args[0];
 
+   /* 1.4.10 */
    Local<Function> cons = Local<Function>::New(isolate, constructor);
-
-#if DBX_NODE_VERSION >= 100000
-   Local<Object> instance = cons->NewInstance(icontext, argc, argv).ToLocalChecked();
-#else
-   Local<Object> instance = cons->NewInstance(icontext, argc, argv).ToLocalChecked();
-#endif
+   Local<Object> instance = cons->NewInstance(icontext, argc, argv).ToLocalChecked(); /* Invoke mglobal::New */
  
    mglobal *gx = ObjectWrap::Unwrap<mglobal>(instance);
 
@@ -222,9 +205,10 @@ void mglobal::Get(const FunctionCallbackInfo<Value>& args)
    Local<String> result;
    DBXGREF gref;
    mglobal *gx = ObjectWrap::Unwrap<mglobal>(args.This());
+   MG_GLOBAL_CHECK_CLASS(gx);
    DBX_DBNAME *c = gx->c;
    DBX_GET_ISOLATE;
-   gx->m_count ++;
+   gx->dbx_count ++;
 
    pcon = c->pcon;
    gref.global = gx->global_name;
@@ -233,7 +217,7 @@ void mglobal::Get(const FunctionCallbackInfo<Value>& args)
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    if (pcon->argc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Get", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Get", 1)));
       return;
    }
    
@@ -253,7 +237,7 @@ void mglobal::Get(const FunctionCallbackInfo<Value>& args)
          char error[DBX_ERROR_SIZE];
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
          return;
       }
       return;
@@ -282,7 +266,7 @@ void mglobal::Get(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = c->dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -295,9 +279,10 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
    Local<String> result;
    DBXGREF gref;
    mglobal *gx = ObjectWrap::Unwrap<mglobal>(args.This());
+   MG_GLOBAL_CHECK_CLASS(gx);
    DBX_DBNAME *c = gx->c;
    DBX_GET_ISOLATE;
-   gx->m_count ++;
+   gx->dbx_count ++;
 
    pcon = c->pcon;
    gref.global = gx->global_name;
@@ -306,7 +291,7 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    if (pcon->argc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Set", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Set", 1)));
       return;
    }
    
@@ -326,7 +311,7 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
          char error[DBX_ERROR_SIZE];
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
          return;
       }
       return;
@@ -352,7 +337,7 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = c->dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -365,9 +350,10 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
    Local<String> result;
    DBXGREF gref;
    mglobal *gx = ObjectWrap::Unwrap<mglobal>(args.This());
+   MG_GLOBAL_CHECK_CLASS(gx);
    DBX_DBNAME *c = gx->c;
    DBX_GET_ISOLATE;
-   gx->m_count ++;
+   gx->dbx_count ++;
 
    pcon = c->pcon;
    gref.global = gx->global_name;
@@ -376,7 +362,7 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    if (pcon->argc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Defined", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Defined", 1)));
       return;
    }
    
@@ -396,7 +382,7 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
          char error[DBX_ERROR_SIZE];
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
          return;
       }
       return;
@@ -423,7 +409,7 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = c->dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -436,9 +422,10 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
    Local<String> result;
    DBXGREF gref;
    mglobal *gx = ObjectWrap::Unwrap<mglobal>(args.This());
+   MG_GLOBAL_CHECK_CLASS(gx);
    DBX_DBNAME *c = gx->c;
    DBX_GET_ISOLATE;
-   gx->m_count ++;
+   gx->dbx_count ++;
 
    pcon = c->pcon;
    gref.global = gx->global_name;
@@ -447,7 +434,7 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    if (pcon->argc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Delete", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Delete", 1)));
       return;
    }
    
@@ -467,7 +454,7 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
          char error[DBX_ERROR_SIZE];
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
          return;
       }
       return;
@@ -492,7 +479,7 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = c->dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -505,9 +492,10 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
    Local<String> result;
    DBXGREF gref;
    mglobal *gx = ObjectWrap::Unwrap<mglobal>(args.This());
+   MG_GLOBAL_CHECK_CLASS(gx);
    DBX_DBNAME *c = gx->c;
    DBX_GET_ISOLATE;
-   gx->m_count ++;
+   gx->dbx_count ++;
 
    pcon = c->pcon;
    gref.global = gx->global_name;
@@ -516,7 +504,7 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    if (pcon->argc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
       return;
    }
    
@@ -536,7 +524,7 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
          char error[DBX_ERROR_SIZE];
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
          return;
       }
       return;
@@ -561,7 +549,7 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = c->dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -574,9 +562,10 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
    Local<String> result;
    DBXGREF gref;
    mglobal *gx = ObjectWrap::Unwrap<mglobal>(args.This());
+   MG_GLOBAL_CHECK_CLASS(gx);
    DBX_DBNAME *c = gx->c;
    DBX_GET_ISOLATE;
-   gx->m_count ++;
+   gx->dbx_count ++;
 
    pcon = c->pcon;
    gref.global = gx->global_name;
@@ -585,7 +574,7 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    if (pcon->argc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Previous", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Previous", 1)));
       return;
    }
    
@@ -605,7 +594,7 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
          char error[DBX_ERROR_SIZE];
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
          return;
       }
       return;
@@ -630,7 +619,7 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = c->dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
 
    args.GetReturnValue().Set(result);
 }
@@ -644,9 +633,10 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
    Local<String> result;
    DBXGREF gref;
    mglobal *gx = ObjectWrap::Unwrap<mglobal>(args.This());
+   MG_GLOBAL_CHECK_CLASS(gx);
    DBX_DBNAME *c = gx->c;
    DBX_GET_ISOLATE;
-   gx->m_count ++;
+   gx->dbx_count ++;
 
    pcon = c->pcon;
    gref.global = gx->global_name;
@@ -655,7 +645,7 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    if (pcon->argc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Increment", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Increment", 1)));
       return;
    }
 
@@ -675,7 +665,7 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
          char error[DBX_ERROR_SIZE];
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
          return;
       }
       return;
@@ -700,7 +690,7 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = c->dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -715,9 +705,10 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
    Local<String> result;
    DBXGREF gref;
    mglobal *gx = ObjectWrap::Unwrap<mglobal>(args.This());
+   MG_GLOBAL_CHECK_CLASS(gx);
    DBX_DBNAME *c = gx->c;
    DBX_GET_ISOLATE;
-   gx->m_count ++;
+   gx->dbx_count ++;
 
    pcon = c->pcon;
    gref.global = gx->global_name;
@@ -726,11 +717,11 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    if (pcon->argc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Lock", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Lock", 1)));
       return;
    }
    if (pcon->argc < 1) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Missing or invalid global name on Lock", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Missing or invalid global name on Lock", 1)));
       return;
    }
 
@@ -750,7 +741,7 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
          char error[DBX_ERROR_SIZE];
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
          return;
       }
       return;
@@ -801,7 +792,7 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = c->dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -814,9 +805,10 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
    Local<String> result;
    DBXGREF gref;
    mglobal *gx = ObjectWrap::Unwrap<mglobal>(args.This());
+   MG_GLOBAL_CHECK_CLASS(gx);
    DBX_DBNAME *c = gx->c;
    DBX_GET_ISOLATE;
-   gx->m_count ++;
+   gx->dbx_count ++;
 
    pcon = c->pcon;
    gref.global = gx->global_name;
@@ -825,7 +817,7 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    if (pcon->argc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Unlock", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Unlock", 1)));
       return;
    }
 
@@ -845,7 +837,7 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
          char error[DBX_ERROR_SIZE];
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
          return;
       }
       return;
@@ -878,102 +870,187 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = c->dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
    args.GetReturnValue().Set(result);
+}
+
+
+void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
+{
+   short async;
+   int rc, argc, otype, nx, fc, mn, ismglobal, mglobal1;
+   char *p;
+   char buffer[32];
+   DBXCON *pcon;
+   mglobal *gx = ObjectWrap::Unwrap<mglobal>(args.This());
+   mglobal *gx1;
+   MG_GLOBAL_CHECK_CLASS(gx);
+   DBX_DBNAME *c = gx->c;
+   DBXVAL *pval;
+   DBX_GET_ICONTEXT;
+   Local<Object> obj;
+   Local<String> str;
+   Local<String> result;
+   gx->dbx_count ++;
+
+   pcon = c->pcon;
+   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+
+   if (pcon->argc < 1) {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The Merge method takes at least one argument (the global to merge from)", 1)));
+      return;
+   }
+
+   nx = 0;
+   mglobal1 = 0;
+   pcon->args[nx].type = DBX_TYPE_STR;
+   pcon->args[nx].sort = DBX_DSORT_GLOBAL;
+   dbx_ibuffer_add(pcon, isolate, nx, str, gx->global_name, (int) strlen(gx->global_name), 2);
+   nx ++;
+   if ((pval = gx->pkey)) {
+      while (pval) {
+         pcon->args[nx].sort = DBX_DSORT_DATA;
+         pcon->args[nx].cvalue.pstr = 0;
+         if (pval->type == DBX_TYPE_INT) {
+            pcon->args[nx].type = DBX_TYPE_INT;
+            pcon->args[nx].num.int32 = (int) pval->num.int32;
+            T_SPRINTF(buffer, _dbxso(buffer), "%d", pval->num.int32);
+            dbx_ibuffer_add(pcon, isolate, nx, str, buffer, (int) strlen(buffer), 2);
+         }
+         else {
+            dbx_ibuffer_add(pcon, isolate, nx, str, pval->svalue.buf_addr, (int) pval->svalue.len_used, 2);
+         }
+         nx ++;
+         pval = pval->pnext;
+      }
+   }
+
+   for (argc = 0; argc < pcon->argc; argc ++) {
+      obj = dbx_is_object(args[argc], &otype);
+      if (otype) {
+         ismglobal = 0;
+         fc = obj->InternalFieldCount();
+         if (fc == 3) {
+            mn = DBX_INT32_VALUE(obj->GetInternalField(2));
+            if (mn == DBX_MAGIC_NUMBER_MGLOBAL) {
+               ismglobal = 1;
+               mglobal1 ++;
+               gx1 = ObjectWrap::Unwrap<mglobal>(obj);
+               pcon->args[nx].type = DBX_TYPE_STR;
+               pcon->args[nx].sort = DBX_DSORT_GLOBAL;
+               dbx_ibuffer_add(pcon, isolate, nx, str, gx1->global_name, (int) strlen(gx1->global_name), 2);
+               nx ++;
+               if ((pval = gx1->pkey)) {
+                  while (pval) {
+                     pcon->args[nx].sort = DBX_DSORT_DATA;
+                     pcon->args[nx].cvalue.pstr = 0;
+                     if (pval->type == DBX_TYPE_INT) {
+                        pcon->args[nx].type = DBX_TYPE_INT;
+                        pcon->args[nx].num.int32 = (int) pval->num.int32;
+                        T_SPRINTF(buffer, _dbxso(buffer), "%d", pval->num.int32);
+                        dbx_ibuffer_add(pcon, isolate, nx, str, buffer, (int) strlen(buffer), 2);
+                     }
+                     else {
+                        dbx_ibuffer_add(pcon, isolate, nx, str, pval->svalue.buf_addr, (int) pval->svalue.len_used, 2);
+                     }
+                     nx ++;
+                     pval = pval->pnext;
+                  }
+               }
+            }
+         }
+         if (ismglobal == 0) {
+            pcon->args[nx].sort = DBX_DSORT_DATA;
+            if (otype == 2) {
+               p = node::Buffer::Data(obj);
+               dbx_ibuffer_add(pcon, isolate, nx ++, str, p, (int) strlen(p), 2);
+            }
+            else {
+               str = DBX_TO_STRING(args[argc]);
+               dbx_ibuffer_add(pcon, isolate, nx ++, str, NULL, 0, 2);
+            }
+         }
+      }
+      else {
+         pcon->args[nx].sort = DBX_DSORT_DATA;
+         str = DBX_TO_STRING(args[argc]);
+         dbx_ibuffer_add(pcon, isolate, nx ++, str, NULL, 0, 2);
+      }
+   }
+
+   pcon->argc = nx;
+/*
+   {
+      int n;
+      for (n = 0; n < nx; n ++) {
+         printf("\r\n pcon->argc=%d; n=%d; type=%d; sort=%d; len=%d; s=%s;", pcon->argc, n, pcon->args[n].type, pcon->args[n].sort, pcon->args[n].svalue.len_used, pcon->args[n].svalue.buf_addr);
+      }
+   }
+*/
+
+   if (mglobal1 == 0) {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The global to merge from is not specified", 1)));
+      return;
+   }
+
+   DBX_DBFUN_START(c, pcon);
+
+   if (async) {
+      DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pcon);
+      baton->pcon->p_dbxfun = (int (*) (struct tagDBXCON * pcon)) dbx_merge;
+      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+      baton->cb.Reset(isolate, cb);
+      gx->Ref();
+      if (c->dbx_queue_task((void *) c->dbx_process_task, (void *) c->dbx_invoke_callback, baton, 0)) {
+         char error[DBX_ERROR_SIZE];
+         T_STRCPY(error, _dbxso(error), pcon->error);
+         c->dbx_destroy_baton(baton, pcon);
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
+         return;
+      }
+      return;
+   }
+
+   rc = dbx_merge(pcon);
+
+   if (rc == CACHE_SUCCESS) {
+      dbx_create_string(&(pcon->output_val.svalue), (void *) &rc, DBX_TYPE_INT);
+   }
+   else {
+      dbx_error_message(pcon, rc);
+   }
+
+   DBX_DBFUN_END(c);
+
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   args.GetReturnValue().Set(result);
+   return;
 }
 
 
 void mglobal::Reset(const FunctionCallbackInfo<Value>& args)
 {
-   int n, len, otype;
-   char global_name[256], *p;
+   int rc;
    DBXCON *pcon;
-   DBXVAL *pval, *pvalp;
-   Local<Object> obj;
-   Local<String> str;
    mglobal *gx = ObjectWrap::Unwrap<mglobal>(args.This());
+   MG_GLOBAL_CHECK_CLASS(gx);
    DBX_DBNAME *c = gx->c;
-   DBX_GET_ICONTEXT;
-   gx->m_count ++;
+   DBX_GET_ISOLATE;
+   gx->dbx_count ++;
 
    pcon = c->pcon;
    pcon->argc = args.Length();
 
    if (pcon->argc < 1) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "The Reset method takes at least one argument (the global name)", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The Reset method takes at least one argument (the global name)", 1)));
       return;
    }
 
-   c->dbx_write_char8(isolate, DBX_TO_STRING(args[0]), global_name, pcon->utf8);
-   if (global_name[0] == '\0') {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "The Reset method takes at least one argument (the global name)", 1)));
+   /* 1.4.10 */
+   rc = dbx_global_reset(args, isolate, (void *) gx, 0, 0);
+   if (rc < 0) {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The Reset method takes at least one argument (the global name)", 1)));
       return;
-   }
-
-   pval = gx->pkey;
-   while (pval) {
-      pvalp = pval;
-      pval = pval->pnext;
-      dbx_free((void *) pvalp, 0);
-   }
-   gx->pkey = NULL;
-
-   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
-      if (global_name[0] == '^') {
-         T_STRCPY(gx->global_name, _dbxso(gx->global_name), global_name);
-      }
-      else {
-         gx->global_name[0] = '^';
-         T_STRCPY(gx->global_name + 1, _dbxso(gx->global_name), global_name);
-      }
-   }
-   else {
-      if (global_name[0] == '^') {
-         T_STRCPY(gx->global_name, _dbxso(gx->global_name), global_name + 1);
-      }
-      else {
-         T_STRCPY(gx->global_name, _dbxso(gx->global_name), global_name);
-      }
-   }
-
-   pvalp = NULL;
-   for (n = 1; n < pcon->argc; n ++) {
-      if (args[n]->IsInt32()) {
-         pval = (DBXVAL *) dbx_malloc(sizeof(DBXVAL), 0);
-         pval->type = DBX_TYPE_INT;
-         pval->num.int32 = (int) DBX_INT32_VALUE(args[n]);
-      }
-      else {
-         obj = c->dbx_is_object(args[n], &otype);
-         if (otype == 2) {
-            p = node::Buffer::Data(obj);
-            len = (int) strlen(p);
-            pval = (DBXVAL *) dbx_malloc(sizeof(DBXVAL) + len + 32, 0);
-            pval->type = DBX_TYPE_STR;
-            pval->svalue.buf_addr = ((char *) pval) + sizeof(DBXVAL);
-            memcpy((void *) pval->svalue.buf_addr, (void *) p, (size_t) len);
-            pval->svalue.len_alloc = len + 32;
-            pval->svalue.len_used = len;
-         }
-         else {
-            str = DBX_TO_STRING(args[n]);
-            len = (int) c->dbx_string8_length(isolate, str, 0);
-            pval = (DBXVAL *) dbx_malloc(sizeof(DBXVAL) + len + 32, 0);
-            pval->type = DBX_TYPE_STR;
-            pval->svalue.buf_addr = ((char *) pval) + sizeof(DBXVAL);
-            c->dbx_write_char8(isolate, str, pval->svalue.buf_addr, 1);
-            pval->svalue.len_alloc = len + 32;
-            pval->svalue.len_used = len;
-         }
-      }
-      if (pvalp) {
-         pvalp->pnext = pval;
-      }
-      else {
-         gx->pkey = pval;
-      }
-      pvalp = pval;
-      pvalp->pnext = NULL;
    }
 
    return;
@@ -985,19 +1062,20 @@ void mglobal::Close(const FunctionCallbackInfo<Value>& args)
    DBXCON *pcon;
    DBXVAL *pval, *pvalp;
    mglobal *gx = ObjectWrap::Unwrap<mglobal>(args.This());
+   MG_GLOBAL_CHECK_CLASS(gx);
    DBX_DBNAME *c = gx->c;
    DBX_GET_ISOLATE;
-   gx->m_count ++;
+   gx->dbx_count ++;
 
    pcon = c->pcon;
    pcon->argc = args.Length();
 
    if (pcon->argc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments", 1)));
       return;
    }
    if (pcon->argc > 0) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Closing a global template does not take any arguments", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Closing a global template does not take any arguments", 1)));
       return;
    }
 

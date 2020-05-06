@@ -27,11 +27,18 @@
 #ifndef MG_CURSOR_H
 #define MG_CURSOR_H
 
+#define MG_CURSOR_CHECK_CLASS(a) \
+   if (a->c == NULL) { \
+      v8::Isolate* isolatex = args.GetIsolate(); \
+      isolatex->ThrowException(v8::Exception::Error(dbx_new_string8(isolatex, (char *) "Error in the instantiation of the mcursor class", 1))); \
+      return; \
+   } \
+
 class mcursor : public node::ObjectWrap
 {
-   public:
+public:
 
-   short          open;
+   int            dbx_count;
    short          context;
    short          getdata;
    short          multilevel;
@@ -40,48 +47,34 @@ class mcursor : public node::ObjectWrap
    char           global_name[256];
    DBXQR          *pqr_prev;
    DBXQR          *pqr_next;
-   DBXCON         *pcon;
    DBXSTR         data;
    DBXSQL         *psql;
-   int            m_count;
    DBX_DBNAME     *c;
 
 
 #if DBX_NODE_VERSION >= 100000
-   static void                   Init(v8::Local<v8::Object> target);
+   static void       Init                    (v8::Local<v8::Object> exports);
 #else
-   static void                   Init(v8::Handle<v8::Object> target);
+   static void       Init                    (v8::Handle<v8::Object> exports);
 #endif
+   explicit          mcursor                 (int value = 0);
+                     ~mcursor                ();
 
-#if DBX_NODE_VERSION >= 100000
-   static void dbx_set_prototype_method(v8::Local<v8::FunctionTemplate> t, v8::FunctionCallback callback, const char* name, const char* data);
-#else
-   static void dbx_set_prototype_method(v8::Handle<v8::FunctionTemplate> t, v8::FunctionCallback callback, const char* name, const char* data);
-#endif
+   static mcursor *  NewInstance             (const v8::FunctionCallbackInfo<v8::Value>& args);
 
-   static mcursor * NewInstance(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static int        delete_mcursor_template (mcursor *cx);
 
-   static int delete_mcursor_template(mcursor *cx);
+   static void       Execute                 (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Cleanup                 (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Next                    (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Previous                (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Reset                   (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Close                   (const v8::FunctionCallbackInfo<v8::Value>& args);
 
-   static void Execute(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Cleanup(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Next(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Previous(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Reset(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Close(const v8::FunctionCallbackInfo<v8::Value>& args);
+private:
 
-   inline double value() const { return value_; }
-
-   explicit mcursor(double value = 0);
-   ~mcursor();
-
-   private:
-
-   static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static v8::Persistent<v8::Function> constructor;
-
-
-   double value_;
+   static void       New                     (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static v8::Persistent<v8::Function>       constructor;
 };
 
 int dbx_escape_output(DBXSTR *pdata, char *item, int item_len, short context);

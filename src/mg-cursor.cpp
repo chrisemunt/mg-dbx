@@ -32,7 +32,7 @@ using namespace node;
 
 Persistent<Function> mcursor::constructor;
 
-mcursor::mcursor(double value) : value_(value)
+mcursor::mcursor(int value) : dbx_count(value)
 {
 }
 
@@ -44,13 +44,14 @@ mcursor::~mcursor()
 
 
 #if DBX_NODE_VERSION >= 100000
-void mcursor::Init(Local<Object> target)
+void mcursor::Init(Local<Object> exports)
 #else
-void mcursor::Init(Handle<Object> target)
+void mcursor::Init(Handle<Object> exports)
 #endif
 {
 #if DBX_NODE_VERSION >= 120000
-   Isolate* isolate = target->GetIsolate();
+   Isolate* isolate = exports->GetIsolate();
+   Local<Context> icontext = isolate->GetCurrentContext();
 
    Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
    tpl->SetClassName(String::NewFromUtf8(isolate, "mcursor", NewStringType::kNormal).ToLocalChecked());
@@ -66,16 +67,16 @@ void mcursor::Init(Handle<Object> target)
 
    /* Prototypes */
 
-   DBX_NODE_SET_PROTOTYPE_METHODC("execute", Execute);
-   DBX_NODE_SET_PROTOTYPE_METHODC("cleanup", Cleanup);
-   DBX_NODE_SET_PROTOTYPE_METHODC("next", Next);
-   DBX_NODE_SET_PROTOTYPE_METHODC("previous", Previous);
-   DBX_NODE_SET_PROTOTYPE_METHODC("reset", Reset);
-   DBX_NODE_SET_PROTOTYPE_METHODC("_close", Close);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "execute", Execute);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "cleanup", Cleanup);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "next", Next);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "previous", Previous);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "reset", Reset);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "_close", Close);
 
 #if DBX_NODE_VERSION >= 120000
-   Local<Context> icontext = isolate->GetCurrentContext();
    constructor.Reset(isolate, tpl->GetFunction(icontext).ToLocalChecked());
+   exports->Set(icontext, String::NewFromUtf8(isolate, "mcursor", NewStringType::kNormal).ToLocalChecked(), tpl->GetFunction(icontext).ToLocalChecked()).FromJust();
 #else
    constructor.Reset(isolate, tpl->GetFunction());
 #endif
@@ -90,11 +91,48 @@ void mcursor::New(const FunctionCallbackInfo<Value>& args)
    Local<Context> icontext = isolate->GetCurrentContext();
 #endif
    HandleScope scope(isolate);
+   int rc, fc, mn, argc, otype;
+   DBX_DBNAME *c = NULL;
+   Local<Object> obj;
+
+   /* 1.4.10 */
+   argc = args.Length();
+   if (argc > 0) {
+      obj = dbx_is_object(args[0], &otype);
+      if (otype) {
+         fc = obj->InternalFieldCount();
+         if (fc == 3) {
+            mn = DBX_INT32_VALUE(obj->GetInternalField(2));
+            if (mn == DBX_MAGIC_NUMBER) {
+               c = ObjectWrap::Unwrap<DBX_DBNAME>(obj);
+            }
+         }
+      }
+   }
 
    if (args.IsConstructCall()) {
       /* Invoked as constructor: `new mcursor(...)` */
-      double value = args[0]->IsUndefined() ? 0 : DBX_NUMBER_VALUE(args[0]);
+      int value = args[0]->IsUndefined() ? 0 : DBX_INT32_VALUE(args[0]);
+
       mcursor * obj = new mcursor(value);
+      obj->c = NULL;
+
+      if (c) { /* 1.4.10 */
+         if (c->pcon == NULL) {
+            isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "No Connection to the database", 1)));
+            return;
+         }
+         c->pcon->argc = argc;
+         dbx_cursor_init((void *) obj);
+         obj->c = c;
+
+         /* 1.4.10 */
+         rc = dbx_cursor_reset(args, isolate, (void *) obj, 1, 1);
+         if (rc < 0) {
+            isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The mcursor::New() method takes at least one argument (the query object)", 1)));
+            return;
+         }
+      }
       obj->Wrap(args.This());
       args.GetReturnValue().Set(args.This());
    }
@@ -103,54 +141,8 @@ void mcursor::New(const FunctionCallbackInfo<Value>& args)
       const int argc = 1;
       Local<Value> argv[argc] = { args[0] };
       Local<Function> cons = Local<Function>::New(isolate, constructor);
-
-#if DBX_NODE_VERSION >= 100000
       args.GetReturnValue().Set(cons->NewInstance(isolate->GetCurrentContext(), argc, argv).ToLocalChecked());
-#else
-      args.GetReturnValue().Set(cons->NewInstance(isolate->GetCurrentContext(), argc, argv).ToLocalChecked());
-#endif
    }
-
-}
-
-
-#if DBX_NODE_VERSION >= 100000
-void mcursor::dbx_set_prototype_method(Local<FunctionTemplate> t, FunctionCallback callback, const char* name, const char* data)
-#else
-void mcursor::dbx_set_prototype_method(Handle<FunctionTemplate> t, FunctionCallback callback, const char* name, const char* data)
-#endif
-{
-#if DBX_NODE_VERSION >= 100000
-
-   v8::Isolate* isolate = v8::Isolate::GetCurrent();
-   v8::HandleScope handle_scope(isolate);
-   v8::Local<v8::Signature> s = v8::Signature::New(isolate, t);
-
-#if DBX_NODE_VERSION >= 120000
-   Local<String> data_str = String::NewFromUtf8(isolate, data, NewStringType::kNormal).ToLocalChecked();
-#else
-   Local<String> data_str = String::NewFromUtf8(isolate, data);
-#endif
-
-#if 0
-   v8::Local<v8::FunctionTemplate> tx = v8::FunctionTemplate::New(isolate, callback, v8::Local<v8::Value>(), s);
-#else
-   v8::Local<v8::FunctionTemplate> tx = v8::FunctionTemplate::New(isolate, callback, data_str, s);
-#endif
-
-#if DBX_NODE_VERSION >= 120000
-   v8::Local<v8::String> fn_name = v8::String::NewFromUtf8(isolate, name, NewStringType::kNormal).ToLocalChecked();
-#else
-   v8::Local<v8::String> fn_name = v8::String::NewFromUtf8(isolate, name);
-#endif
-
-   tx->SetClassName(fn_name);
-   t->PrototypeTemplate()->Set(fn_name, tx);
-#else
-   NODE_SET_PROTOTYPE_METHOD(t, name, callback);
-#endif
-
-   return;
 }
 
 
@@ -170,13 +162,7 @@ mcursor * mcursor::NewInstance(const FunctionCallbackInfo<Value>& args)
    argv[0] = args[0];
 
    Local<Function> cons = Local<Function>::New(isolate, constructor);
-
-#if DBX_NODE_VERSION >= 100000
    Local<Object> instance = cons->NewInstance(icontext, argc, argv).ToLocalChecked();
-#else
-   Local<Object> instance = cons->NewInstance(icontext, argc, argv).ToLocalChecked();
-#endif
- 
    mcursor *cx = ObjectWrap::Unwrap<mcursor>(instance);
 
    args.GetReturnValue().Set(instance);
@@ -198,9 +184,10 @@ void mcursor::Execute(const FunctionCallbackInfo<Value>& args)
    Local<Object> obj;
    Local<String> key;
    mcursor *cx = ObjectWrap::Unwrap<mcursor>(args.This());
+   MG_CURSOR_CHECK_CLASS(cx);
    DBX_DBNAME *c = cx->c;
    DBX_GET_ICONTEXT;
-   cx->m_count ++;
+   cx->dbx_count ++;
 
    pcon = c->pcon;
    pcon->psql = cx->psql;
@@ -208,7 +195,7 @@ void mcursor::Execute(const FunctionCallbackInfo<Value>& args)
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    if (pcon->argc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Execute", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Execute", 1)));
       return;
    }
    
@@ -228,7 +215,7 @@ void mcursor::Execute(const FunctionCallbackInfo<Value>& args)
 
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
          return;
       }
       return;
@@ -240,13 +227,13 @@ void mcursor::Execute(const FunctionCallbackInfo<Value>& args)
 
    obj = DBX_OBJECT_NEW();
 
-   key = c->dbx_new_string8(isolate, (char *) "sqlcode", 0);
+   key = dbx_new_string8(isolate, (char *) "sqlcode", 0);
    DBX_SET(obj, key, DBX_INTEGER_NEW(pcon->psql->sqlcode));
-   key = c->dbx_new_string8(isolate, (char *) "sqlstate", 0);
-   DBX_SET(obj, key, c->dbx_new_string8(isolate, pcon->psql->sqlstate, 0));
+   key = dbx_new_string8(isolate, (char *) "sqlstate", 0);
+   DBX_SET(obj, key, dbx_new_string8(isolate, pcon->psql->sqlstate, 0));
    if (pcon->error[0]) {
-      key = c->dbx_new_string8(isolate, (char *) "error", 0);
-      DBX_SET(obj, key, c->dbx_new_string8(isolate, pcon->error, 0));
+      key = dbx_new_string8(isolate, (char *) "error", 0);
+      DBX_SET(obj, key, dbx_new_string8(isolate, pcon->error, 0));
    }
 
    args.GetReturnValue().Set(obj);
@@ -259,9 +246,10 @@ void mcursor::Cleanup(const FunctionCallbackInfo<Value>& args)
    DBXCON *pcon;
    Local<String> result;
    mcursor *cx = ObjectWrap::Unwrap<mcursor>(args.This());
+   MG_CURSOR_CHECK_CLASS(cx);
    DBX_DBNAME *c = cx->c;
    DBX_GET_ISOLATE;
-   cx->m_count ++;
+   cx->dbx_count ++;
 
    pcon = c->pcon;
    pcon->psql = cx->psql;
@@ -269,7 +257,7 @@ void mcursor::Cleanup(const FunctionCallbackInfo<Value>& args)
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    if (pcon->argc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Cleanup", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Cleanup", 1)));
       return;
    }
    
@@ -289,7 +277,7 @@ void mcursor::Cleanup(const FunctionCallbackInfo<Value>& args)
 
          T_STRCPY(error, _dbxso(error), pcon->error);
          c->dbx_destroy_baton(baton, pcon);
-         isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, error, 1)));
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
          return;
       }
       return;
@@ -299,7 +287,7 @@ void mcursor::Cleanup(const FunctionCallbackInfo<Value>& args)
 
    DBX_DBFUN_END(c);
 
-   result = c->dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
    args.GetReturnValue().Set(result);
    return;
 }
@@ -314,20 +302,21 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
    Local<String> key;
    DBXQR *pqr;
    mcursor *cx = ObjectWrap::Unwrap<mcursor>(args.This());
+   MG_CURSOR_CHECK_CLASS(cx);
    DBX_DBNAME *c = cx->c;
    DBX_GET_ICONTEXT;
-   cx->m_count ++;
+   cx->dbx_count ++;
 
    pcon = c->pcon;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    if (pcon->argc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
       return;
    }
    if (async) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
       return;
    }
 
@@ -361,7 +350,7 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
             return;
          }
 */
-         key = c->dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, c->utf8);
+         key = dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, c->utf8);
          args.GetReturnValue().Set(key);
       }
       else {
@@ -371,16 +360,16 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
             dbx_escape_output(&(cx->data), cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, 1);
             dbx_escape_output(&(cx->data), (char *) "&data=", 6, 0);
             dbx_escape_output(&(cx->data), cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 1);
-            key = c->dbx_new_string8n(isolate, (char *) cx->data.buf_addr, cx->data.len_used, 0);
+            key = dbx_new_string8n(isolate, (char *) cx->data.buf_addr, cx->data.len_used, 0);
             args.GetReturnValue().Set(key);
          }
          else {
             obj = DBX_OBJECT_NEW();
 
-            key = c->dbx_new_string8(isolate, (char *) "key", 0);
-            DBX_SET(obj, key, c->dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, c->utf8));
-            key = c->dbx_new_string8(isolate, (char *) "data", 0);
-            DBX_SET(obj, key, c->dbx_new_string8n(isolate, cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 0));
+            key = dbx_new_string8(isolate, (char *) "key", 0);
+            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, c->utf8));
+            key = dbx_new_string8(isolate, (char *) "data", 0);
+            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 0));
             args.GetReturnValue().Set(obj);
          }
       }
@@ -412,21 +401,21 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
             dbx_escape_output(&(cx->data), cx->pqr_next->data.svalue.buf_addr, cx->pqr_next->data.svalue.len_used, 1);
          }
 
-         key = c->dbx_new_string8n(isolate, (char *) cx->data.buf_addr, cx->data.len_used, 0);
+         key = dbx_new_string8n(isolate, (char *) cx->data.buf_addr, cx->data.len_used, 0);
          args.GetReturnValue().Set(key);
       }
       else {
          obj = DBX_OBJECT_NEW();
-         key = c->dbx_new_string8(isolate, (char *) "key", 0);
+         key = dbx_new_string8(isolate, (char *) "key", 0);
          Local<Array> a = DBX_ARRAY_NEW(cx->pqr_next->keyn);
          DBX_SET(obj, key, a);
 
          for (n = 0; n < cx->pqr_next->keyn; n ++) {
-            DBX_SET(a, n, c->dbx_new_string8n(isolate, cx->pqr_next->key[n].buf_addr, cx->pqr_next->key[n].len_used, 0));
+            DBX_SET(a, n, dbx_new_string8n(isolate, cx->pqr_next->key[n].buf_addr, cx->pqr_next->key[n].len_used, 0));
          }
          if (cx->getdata) {
-            key = c->dbx_new_string8(isolate, (char *) "data", 0);
-            DBX_SET(obj, key, c->dbx_new_string8n(isolate, cx->pqr_next->data.svalue.buf_addr, cx->pqr_next->data.svalue.len_used, 0));
+            key = dbx_new_string8(isolate, (char *) "data", 0);
+            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_next->data.svalue.buf_addr, cx->pqr_next->data.svalue.len_used, 0));
          }
       }
 
@@ -452,7 +441,7 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
          args.GetReturnValue().Set(DBX_NULL());
       }
       else {
-         key = c->dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, c->utf8);
+         key = dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, c->utf8);
          args.GetReturnValue().Set(key);
       }
       return;
@@ -474,7 +463,7 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
          obj = DBX_OBJECT_NEW();
 
          for (n = 0; n < pcon->psql->no_cols; n ++) {
-            len = (int) dbx_get_block_size(&(pcon->output_val.svalue), pcon->output_val.offs, &dsort, &dtype);
+            len = (int) dbx_get_block_size((unsigned char *) pcon->output_val.svalue.buf_addr, pcon->output_val.offs, &dsort, &dtype);
             pcon->output_val.offs += 5;
 
             /* printf("\r\n ROW DATA: n=%d; len=%d; offset=%d; sort=%d; type=%d; str=%s;", n, len, pcon->output_val.offs, dsort, dtype, pcon->output_val.svalue.buf_addr + pcon->output_val.offs); */
@@ -483,8 +472,8 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
                break;
             }
 
-            key = c->dbx_new_string8n(isolate, (char *) pcon->psql->cols[n]->name.buf_addr, pcon->psql->cols[n]->name.len_used, 0);
-            DBX_SET(obj, key, c->dbx_new_string8n(isolate,  pcon->output_val.svalue.buf_addr + pcon->output_val.offs, len, 0));
+            key = dbx_new_string8n(isolate, (char *) pcon->psql->cols[n]->name.buf_addr, pcon->psql->cols[n]->name.len_used, 0);
+            DBX_SET(obj, key, dbx_new_string8n(isolate,  pcon->output_val.svalue.buf_addr + pcon->output_val.offs, len, 0));
             pcon->output_val.offs += len;
          }
 
@@ -504,20 +493,21 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
    Local<String> key;
    DBXQR *pqr;
    mcursor *cx = ObjectWrap::Unwrap<mcursor>(args.This());
+   MG_CURSOR_CHECK_CLASS(cx);
    DBX_DBNAME *c = cx->c;
    DBX_GET_ICONTEXT;
-   cx->m_count ++;
+   cx->dbx_count ++;
 
    pcon = c->pcon;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    if (pcon->argc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments on Previous", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Previous", 1)));
       return;
    }
    if (async) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Cursor based operations cannot be invoked asynchronously", 1)));
       return;
    }
 
@@ -540,7 +530,7 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
          args.GetReturnValue().Set(DBX_NULL());
       }
       else if (cx->getdata == 0) {
-         key = c->dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, c->utf8);
+         key = dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, c->utf8);
          args.GetReturnValue().Set(key);
       }
       else {
@@ -550,16 +540,16 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
             dbx_escape_output(&cx->data, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, 1);
             dbx_escape_output(&cx->data, (char *) "&data=", 6, 0);
             dbx_escape_output(&cx->data, cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 1);
-            key = c->dbx_new_string8n(isolate, (char *) cx->data.buf_addr, cx->data.len_used, 0);
+            key = dbx_new_string8n(isolate, (char *) cx->data.buf_addr, cx->data.len_used, 0);
             args.GetReturnValue().Set(key);
          }
          else {
             obj = DBX_OBJECT_NEW();
 
-            key = c->dbx_new_string8(isolate, (char *) "key", 0);
-            DBX_SET(obj, key, c->dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, c->utf8));
-            key = c->dbx_new_string8(isolate, (char *) "data", 0);
-            DBX_SET(obj, key, c->dbx_new_string8n(isolate, cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 0));
+            key = dbx_new_string8(isolate, (char *) "key", 0);
+            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, c->utf8));
+            key = dbx_new_string8(isolate, (char *) "data", 0);
+            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 0));
             args.GetReturnValue().Set(obj);
          }
       }
@@ -591,23 +581,23 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
             dbx_escape_output(&(cx->data), cx->pqr_next->data.svalue.buf_addr, cx->pqr_next->data.svalue.len_used, 1);
          }
 
-         key = c->dbx_new_string8n(isolate, (char *) cx->data.buf_addr, cx->data.len_used, 0);
+         key = dbx_new_string8n(isolate, (char *) cx->data.buf_addr, cx->data.len_used, 0);
          args.GetReturnValue().Set(key);
       }
       else {
          obj = DBX_OBJECT_NEW();
 
-         key = c->dbx_new_string8(isolate, (char *) "global", 0);
-         DBX_SET(obj, key, c->dbx_new_string8(isolate, cx->pqr_next->global_name.buf_addr, 0));
-         key = c->dbx_new_string8(isolate, (char *) "key", 0);
+         key = dbx_new_string8(isolate, (char *) "global", 0);
+         DBX_SET(obj, key, dbx_new_string8(isolate, cx->pqr_next->global_name.buf_addr, 0));
+         key = dbx_new_string8(isolate, (char *) "key", 0);
          Local<Array> a = DBX_ARRAY_NEW(cx->pqr_next->keyn);
          DBX_SET(obj, key, a);
          for (n = 0; n < cx->pqr_next->keyn; n ++) {
-            DBX_SET(a, n, c->dbx_new_string8n(isolate, cx->pqr_next->key[n].buf_addr, cx->pqr_next->key[n].len_used, 0));
+            DBX_SET(a, n, dbx_new_string8n(isolate, cx->pqr_next->key[n].buf_addr, cx->pqr_next->key[n].len_used, 0));
          }
          if (cx->getdata) {
-            key = c->dbx_new_string8(isolate, (char *) "data", 0);
-            DBX_SET(obj, key, c->dbx_new_string8n(isolate, cx->pqr_next->data.svalue.buf_addr, cx->pqr_next->data.svalue.len_used, 0));
+            key = dbx_new_string8(isolate, (char *) "data", 0);
+            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_next->data.svalue.buf_addr, cx->pqr_next->data.svalue.len_used, 0));
          }
       }
 
@@ -634,7 +624,7 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
          args.GetReturnValue().Set(DBX_NULL());
       }
       else {
-         key = c->dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, c->utf8);
+         key = dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, c->utf8);
          args.GetReturnValue().Set(key);
       }
       return;
@@ -656,7 +646,7 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
          obj = DBX_OBJECT_NEW();
 
          for (n = 0; n < pcon->psql->no_cols; n ++) {
-            len = (int) dbx_get_block_size(&(pcon->output_val.svalue), pcon->output_val.offs, &dsort, &dtype);
+            len = (int) dbx_get_block_size((unsigned char *) pcon->output_val.svalue.buf_addr, pcon->output_val.offs, &dsort, &dtype);
             pcon->output_val.offs += 5;
 
             /* printf("\r\n ROW DATA: n=%d; len=%d; offset=%d; sort=%d; type=%d; str=%s;", n, len, pcon->output_val.offs, dsort, dtype, pcon->output_val.svalue.buf_addr + pcon->output_val.offs); */
@@ -665,8 +655,8 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
                break;
             }
 
-            key = c->dbx_new_string8n(isolate, (char *) pcon->psql->cols[n]->name.buf_addr, pcon->psql->cols[n]->name.len_used, 0);
-            DBX_SET(obj, key, c->dbx_new_string8n(isolate,  pcon->output_val.svalue.buf_addr + pcon->output_val.offs, len, 0));
+            key = dbx_new_string8n(isolate, (char *) pcon->psql->cols[n]->name.buf_addr, pcon->psql->cols[n]->name.len_used, 0);
+            DBX_SET(obj, key, dbx_new_string8n(isolate,  pcon->output_val.svalue.buf_addr + pcon->output_val.offs, len, 0));
             pcon->output_val.offs += len;
          }
          args.GetReturnValue().Set(obj);
@@ -678,111 +668,27 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
 
 void mcursor::Reset(const FunctionCallbackInfo<Value>& args)
 {
-   int n, len;
-   char global_name[256];
+   int rc;
    DBXCON *pcon;
-   Local<Object> obj;
-   Local<String> key;
-   Local<String> value;
    mcursor *cx = ObjectWrap::Unwrap<mcursor>(args.This());
+   MG_CURSOR_CHECK_CLASS(cx);
    DBX_DBNAME *c = cx->c;
-   DBX_GET_ICONTEXT;
-   cx->m_count ++;
+   DBX_GET_ISOLATE;
+   cx->dbx_count ++;
 
    pcon = c->pcon;
    pcon->argc = args.Length();
 
    if (pcon->argc < 1) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "The mglobalquery.reset() method takes at least one argument (the global reference to start with)", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The mglobalquery.reset() method takes at least one argument (the global reference to start with)", 1)));
       return;
    }
 
-   obj = DBX_TO_OBJECT(args[0]);
-   key = c->dbx_new_string8(isolate, (char *) "global", 1);
-   if (DBX_GET(obj, key)->IsString()) {
-      c->dbx_write_char8(isolate, DBX_TO_STRING(DBX_GET(obj, key)), global_name, pcon->utf8);
-   }
-   else {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Missing global name in the global object", 1)));
+   /* 1.4.10 */
+   rc = dbx_cursor_reset(args, isolate, (void *) cx, 0, 0);
+   if (rc < 0) {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The mglobalquery.reset() method takes at least one argument (the global reference to start with)", 1)));
       return;
-   }
- 
-   if (global_name[0] == '\0') {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "The mglobalquery.reset() method takes at least one argument (the global name)", 1)));
-      return;
-   }
-
-   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
-      if (global_name[0] == '^') {
-         T_STRCPY(cx->global_name, _dbxso(cx->global_name), global_name);
-      }
-      else {
-         cx->global_name[0] = '^';
-         T_STRCPY(cx->global_name + 1, _dbxso(cx->global_name), global_name);
-      }
-   }
-   else {
-      if (global_name[0] == '^') {
-         T_STRCPY(cx->global_name, _dbxso(cx->global_name), global_name + 1);
-      }
-      else {
-         T_STRCPY(cx->global_name, _dbxso(cx->global_name), global_name);
-      }
-   }
-   strcpy(cx->pqr_next->global_name.buf_addr, cx->global_name);
-   strcpy(cx->pqr_prev->global_name.buf_addr, cx->global_name);
-   cx->pqr_prev->global_name.len_alloc = (int) strlen((char *) cx->pqr_prev->global_name.buf_addr);
-   cx->pqr_next->global_name.len_alloc =  cx->pqr_prev->global_name.len_alloc;
-
-   cx->pqr_prev->keyn = 0;
-   key = c->dbx_new_string8(isolate, (char *) "key", 1);
-   if (DBX_GET(obj, key)->IsArray()) {
-      Local<Array> a = Local<Array>::Cast(DBX_GET(obj, key));
-      cx->pqr_prev->keyn = (int) a->Length();
-      for (n = 0; n < cx->pqr_prev->keyn; n ++) {
-         value = DBX_TO_STRING(DBX_GET(a, n));
-         len = (int) c->dbx_string8_length(isolate, value, 0);
-         c->dbx_write_char8(isolate, value, cx->pqr_prev->key[n].buf_addr, 1);
-         cx->pqr_prev->key[n].len_used = len;
-      }
-   }
-
-   cx->context = 1;
-   cx->counter = 0;
-   cx->getdata = 0;
-   cx->multilevel = 0;
-   cx->format = 0;
-
-   if (pcon->argc > 1) {
-      obj = DBX_TO_OBJECT(args[1]);
-      key = c->dbx_new_string8(isolate, (char *) "getdata", 1);
-      if (DBX_GET(obj, key)->IsBoolean()) {
-         if (DBX_TO_BOOLEAN(DBX_GET(obj, key))->IsTrue()) {
-            cx->getdata = 1;
-         }
-      }
-      key = c->dbx_new_string8(isolate, (char *) "multilevel", 1);
-      if (DBX_GET(obj, key)->IsBoolean()) {
-         if (DBX_TO_BOOLEAN(DBX_GET(obj, key))->IsTrue()) {
-            cx->context = 2;
-         }
-      }
-      key = c->dbx_new_string8(isolate, (char *) "globaldirectory", 1);
-      if (DBX_GET(obj, key)->IsBoolean()) {
-         if (DBX_TO_BOOLEAN(DBX_GET(obj, key))->IsTrue()) {
-            cx->context = 9;
-         }
-      }
-      key = c->dbx_new_string8(isolate, (char *) "format", 1);
-      if (DBX_GET(obj, key)->IsString()) {
-         char buffer[64];
-         value = DBX_TO_STRING(DBX_GET(obj, key));
-         c->dbx_write_char8(isolate, value, buffer, 1);
-         dbx_lcase(buffer);
-         if (!strcmp(buffer, "url")) {
-            cx->format = 1;
-         }
-      }
    }
 
    return;
@@ -793,19 +699,20 @@ void mcursor::Close(const FunctionCallbackInfo<Value>& args)
 {
    DBXCON *pcon;
    mcursor *cx = ObjectWrap::Unwrap<mcursor>(args.This());
+   MG_CURSOR_CHECK_CLASS(cx);
    DBX_DBNAME *c = cx->c;
    DBX_GET_ISOLATE;
-   cx->m_count ++;
+   cx->dbx_count ++;
 
    pcon = c->pcon;
    pcon->argc = args.Length();
 
    if (pcon->argc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Too many arguments", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments", 1)));
       return;
    }
    if (pcon->argc > 0) {
-      isolate->ThrowException(Exception::Error(c->dbx_new_string8(isolate, (char *) "Closing a globalquery template does not take any arguments", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Closing a globalquery template does not take any arguments", 1)));
       return;
    }
 

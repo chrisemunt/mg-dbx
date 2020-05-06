@@ -27,56 +27,51 @@
 #ifndef MG_GLOBAL_H
 #define MG_GLOBAL_H
 
+#define MG_GLOBAL_CHECK_CLASS(a) \
+   if (a->c == NULL) { \
+      v8::Isolate* isolatex = args.GetIsolate(); \
+      isolatex->ThrowException(v8::Exception::Error(dbx_new_string8(isolatex, (char *) "Error in the instantiation of the mglobal class", 1))); \
+      return; \
+   } \
+
 class mglobal : public node::ObjectWrap
 {
-   public:
+public:
 
-   short          open;
+   int            dbx_count;
    char           global_name[256];
    DBXVAL         *pkey;
-   DBXCON         *pcon;
-   int            m_count;
    DBX_DBNAME     *c;
 
-#if DBX_NODE_VERSION >= 100000
-   static void                   Init(v8::Local<v8::Object> target);
-#else
-   static void                   Init(v8::Handle<v8::Object> target);
-#endif
+   static v8::Persistent<v8::Function>       constructor;
 
 #if DBX_NODE_VERSION >= 100000
-   static void dbx_set_prototype_method(v8::Local<v8::FunctionTemplate> t, v8::FunctionCallback callback, const char* name, const char* data);
+   static void       Init                    (v8::Local<v8::Object> exports);
 #else
-   static void dbx_set_prototype_method(v8::Handle<v8::FunctionTemplate> t, v8::FunctionCallback callback, const char* name, const char* data);
+   static void       Init                    (v8::Handle<v8::Object> exports);
 #endif
+   explicit          mglobal                 (int value = 0);
+                     ~mglobal                ();
 
-   static mglobal * NewInstance(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static mglobal *  NewInstance             (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static int        delete_mglobal_template (mglobal *cx);
 
-   static int delete_mglobal_template(mglobal *cx);
+   static void       Get         (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Set         (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Defined     (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Delete      (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Next        (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Previous    (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Increment   (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Lock        (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Unlock      (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Merge       (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Reset       (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Close       (const v8::FunctionCallbackInfo<v8::Value>& args);
 
-   static void Get(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Set(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Defined(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Delete(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Next(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Previous(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Increment(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Lock(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Unlock(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Reset(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Close(const v8::FunctionCallbackInfo<v8::Value>& args);
+private:
 
-   inline double value() const { return value_; }
-
-   explicit mglobal(double value = 0);
-   ~mglobal();
-
-   private:
-
-   static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static v8::Persistent<v8::Function> constructor;
-
-   double value_;
+   static void       New         (const v8::FunctionCallbackInfo<v8::Value>& args);
 };
 
 

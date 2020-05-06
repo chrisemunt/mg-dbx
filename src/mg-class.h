@@ -27,53 +27,47 @@
 #ifndef MG_CLASS_H
 #define MG_CLASS_H
 
+#define MG_CLASS_CHECK_CLASS(a) \
+   if (a->c == NULL) { \
+      v8::Isolate* isolatex = args.GetIsolate(); \
+      isolatex->ThrowException(v8::Exception::Error(dbx_new_string8(isolatex, (char *) "Error in the instantiation of the mclass class", 1))); \
+      return; \
+   } \
+
 class mclass : public node::ObjectWrap
 {
    public:
 
-   short          open;
-   short          context;
+
+   int            dbx_count;
    int            oref;
    char           class_name[256];
-   DBXCON         *pcon;
-   int            m_count;
    DBX_DBNAME     *c;
 
 
 #if DBX_NODE_VERSION >= 100000
-   static void                   Init(v8::Local<v8::Object> target);
+   static void       Init                    (v8::Local<v8::Object> exports);
 #else
-   static void                   Init(v8::Handle<v8::Object> target);
+   static void       Init                    (v8::Handle<v8::Object> exports);
 #endif
+   explicit          mclass                  (int value = 0);
+                     ~mclass                 ();
 
-#if DBX_NODE_VERSION >= 100000
-   static void dbx_set_prototype_method(v8::Local<v8::FunctionTemplate> t, v8::FunctionCallback callback, const char* name, const char* data);
-#else
-   static void dbx_set_prototype_method(v8::Handle<v8::FunctionTemplate> t, v8::FunctionCallback callback, const char* name, const char* data);
-#endif
+   static mclass *   NewInstance             (const v8::FunctionCallbackInfo<v8::Value>& args);
 
-   static mclass * NewInstance(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static int        delete_mclass_template  (mclass *cx);
 
-   static int delete_mclass_template(mclass *cx);
+   static void       ClassMethod             (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Method                  (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       SetProperty             (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       GetProperty             (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Reset                   (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Close                   (const v8::FunctionCallbackInfo<v8::Value>& args);
 
-   static void ClassMethod(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Method(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void SetProperty(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void GetProperty(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Reset(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static void Close(const v8::FunctionCallbackInfo<v8::Value>& args);
+private:
 
-   inline double value() const { return value_; }
-
-   explicit mclass(double value = 0);
-   ~mclass();
-
-   private:
-
-   static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
-   static v8::Persistent<v8::Function> constructor;
-
-   double value_;
+   static void       New                     (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static v8::Persistent<v8::Function>       constructor;
 };
 
 #endif
