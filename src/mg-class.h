@@ -58,9 +58,15 @@ class mclass : public node::ObjectWrap
    static int        delete_mclass_template  (mclass *cx);
 
    static void       ClassMethod             (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       ClassMethod_bx          (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       ClassMethodEx           (const v8::FunctionCallbackInfo<v8::Value>& args, int binary);
    static void       Method                  (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Method_bx               (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       MethodEx                (const v8::FunctionCallbackInfo<v8::Value>& args, int binary);
    static void       SetProperty             (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void       GetProperty             (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       GetProperty_bx          (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       GetPropertyEx           (const v8::FunctionCallbackInfo<v8::Value>& args, int binary);
    static void       Reset                   (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void       Close                   (const v8::FunctionCallbackInfo<v8::Value>& args);
 

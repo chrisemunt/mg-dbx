@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "1"
 #define DBX_VERSION_MINOR        "4"
-#define DBX_VERSION_BUILD        "10"
+#define DBX_VERSION_BUILD        "11"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -205,6 +205,7 @@ DISABLE_WCAST_FUNCTION_TYPE
 #define DBX_CMND_CSETP           43
 #define DBX_CMND_CMETH           44
 
+#define DBX_IBUFFER_OFFSET       15
 
 #if defined(MAX_PATH) && (MAX_PATH>511)
 #define DBX_MAX_PATH             MAX_PATH
@@ -820,6 +821,7 @@ typedef struct tagDBXCON {
    short          done;
    short          lock;
    short          increment;
+   int            binary;
    char           type[64];
    char           path[256];
    char           username[64];
@@ -879,7 +881,6 @@ public:
    short          use_mutex;
    short          handle_sigint;
    short          handle_sigterm;
-   int            utf8;
    unsigned long  pid;
    DBXMUTEX *     p_mutex;
    DBXCON *       pcon;
@@ -920,11 +921,15 @@ public:
 
    static void                   About                            (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Version                          (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   Charset                          (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Open                             (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Close                            (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Namespace                        (const v8::FunctionCallbackInfo<v8::Value>& args);
    static int                    GlobalReference                  (DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXCON *pcon, DBXGREF *pgref, short context);
+
    static void                   Get                              (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   Get_bx                           (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   GetEx                            (const v8::FunctionCallbackInfo<v8::Value>& args, int binary);
    static void                   Set                              (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Defined                          (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Delete                           (const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -940,8 +945,12 @@ public:
    static void                   MGlobalQuery_Close               (const v8::FunctionCallbackInfo<v8::Value>& args);
    static int                    ExtFunctionReference             (DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXCON *pcon, DBXFREF *pfref, DBXFUN *pfun, short context);
    static void                   ExtFunction                      (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   ExtFunction_bx                   (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   ExtFunctionEx                    (const v8::FunctionCallbackInfo<v8::Value>& args, int binary);
    static int                    ClassReference                   (DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXCON *pcon, DBXCREF *pcref, int argc_offset, short context);
    static void                   ClassMethod                      (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   ClassMethod_bx                   (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   ClassMethodEx                    (const v8::FunctionCallbackInfo<v8::Value>& args, int binary);
    static void                   ClassMethod_Close                (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   SQL                              (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   SQL_Close                        (const v8::FunctionCallbackInfo<v8::Value>& args);

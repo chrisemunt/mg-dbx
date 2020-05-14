@@ -68,9 +68,12 @@ void mclass::Init(Handle<Object> exports)
    /* Prototypes */
 
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "classmethod", ClassMethod);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "classmethod_bx", ClassMethod_bx);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "method", Method);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "method_bx", Method_bx);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "setproperty", SetProperty);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "getproperty", GetProperty);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "getproperty_bx", GetProperty_bx);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "reset", Reset);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "_close", Close);
 
@@ -130,6 +133,8 @@ void mclass::New(const FunctionCallbackInfo<Value>& args)
             dbx_write_char8(isolate, DBX_TO_STRING(args[1]), obj->class_name, obj->c->pcon->utf8);
             if (argc > 2) {
                DBX_DBFUN_START(c, c->pcon);
+               c->pcon->lock = 0;
+               c->pcon->increment = 0;
                rc = c->ClassReference(c, args, c->pcon, NULL, 1, 0);
                rc = pcon->p_isc_so->p_CacheInvokeClassMethod(pcon->cargc - 2);
                if (rc == CACHE_SUCCESS) {
@@ -194,6 +199,18 @@ int mclass::delete_mclass_template(mclass *clx)
 
 void mclass::ClassMethod(const FunctionCallbackInfo<Value>& args)
 {
+   return ClassMethodEx(args, 0);
+}
+
+
+void mclass::ClassMethod_bx(const FunctionCallbackInfo<Value>& args)
+{
+   return ClassMethodEx(args, 1);
+}
+
+
+void mclass::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int binary)
+{
    short async;
    int rc;
    DBXCON *pcon;
@@ -206,6 +223,7 @@ void mclass::ClassMethod(const FunctionCallbackInfo<Value>& args)
    clx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = binary;
    cref.class_name = clx->class_name;
    cref.oref = clx->oref;
 
@@ -219,6 +237,8 @@ void mclass::ClassMethod(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon);
 
    cref.optype = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = c->ClassReference(c, args, pcon, &cref, 0, async);
 
    if (async) {
@@ -250,8 +270,14 @@ void mclass::ClassMethod(const FunctionCallbackInfo<Value>& args)
    DBX_DB_UNLOCK(rc);
 
    if (pcon->output_val.type != DBX_TYPE_OREF) {
-      str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
-      args.GetReturnValue().Set(str);
+      if (binary) {
+         Local<Object> bx = node::Buffer::New(isolate, (char *) pcon->output_val.svalue.buf_addr, (size_t) pcon->output_val.svalue.len_used).ToLocalChecked();
+         args.GetReturnValue().Set(bx);
+      }
+      else {
+         str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
+         args.GetReturnValue().Set(str);
+      }
       return;
    }
 
@@ -269,6 +295,18 @@ void mclass::ClassMethod(const FunctionCallbackInfo<Value>& args)
 
 void mclass::Method(const FunctionCallbackInfo<Value>& args)
 {
+   return MethodEx(args, 0);
+}
+
+
+void mclass::Method_bx(const FunctionCallbackInfo<Value>& args)
+{
+   return MethodEx(args, 1);
+}
+
+
+void mclass::MethodEx(const FunctionCallbackInfo<Value>& args, int binary)
+{
    short async;
    int rc;
    DBXCON *pcon;
@@ -281,6 +319,7 @@ void mclass::Method(const FunctionCallbackInfo<Value>& args)
    clx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = binary;
    cref.class_name = clx->class_name;
    cref.oref = clx->oref;
 
@@ -294,6 +333,8 @@ void mclass::Method(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon);
 
    cref.optype = 1;
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = c->ClassReference(c, args, pcon, &cref, 0, async);
 
    if (async) {
@@ -325,8 +366,14 @@ void mclass::Method(const FunctionCallbackInfo<Value>& args)
    DBX_DB_UNLOCK(rc);
 
    if (pcon->output_val.type != DBX_TYPE_OREF) {
-      str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
-      args.GetReturnValue().Set(str);
+      if (binary) {
+         Local<Object> bx = node::Buffer::New(isolate, (char *) pcon->output_val.svalue.buf_addr, (size_t) pcon->output_val.svalue.len_used).ToLocalChecked();
+         args.GetReturnValue().Set(bx);
+      }
+      else {
+         str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
+         args.GetReturnValue().Set(str);
+      }
       return;
    }
 
@@ -356,6 +403,7 @@ void mclass::SetProperty(const FunctionCallbackInfo<Value>& args)
    clx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
    cref.class_name = clx->class_name;
    cref.oref = clx->oref;
 
@@ -369,6 +417,8 @@ void mclass::SetProperty(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon);
 
    cref.optype = 2;
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = c->ClassReference(c, args, pcon, &cref, 0, async);
 
    if (async) {
@@ -399,13 +449,26 @@ void mclass::SetProperty(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(str);
 
    return;
 }
 
+
 void mclass::GetProperty(const FunctionCallbackInfo<Value>& args)
+{
+   return GetPropertyEx(args, 0);
+}
+
+
+void mclass::GetProperty_bx(const FunctionCallbackInfo<Value>& args)
+{
+   return GetPropertyEx(args, 1);
+}
+
+
+void mclass::GetPropertyEx(const FunctionCallbackInfo<Value>& args, int binary)
 {
    short async;
    int rc;
@@ -419,6 +482,7 @@ void mclass::GetProperty(const FunctionCallbackInfo<Value>& args)
    clx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = binary;
    cref.class_name = clx->class_name;
    cref.oref = clx->oref;
 
@@ -432,6 +496,8 @@ void mclass::GetProperty(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon);
 
    cref.optype = 3;
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = c->ClassReference(c, args, pcon, &cref, 0, async);
 
    if (async) {
@@ -462,8 +528,14 @@ void mclass::GetProperty(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
-   args.GetReturnValue().Set(str);
+   if (binary) {
+      Local<Object> bx = node::Buffer::New(isolate, (char *) pcon->output_val.svalue.buf_addr, (size_t) pcon->output_val.svalue.len_used).ToLocalChecked();
+      args.GetReturnValue().Set(bx);
+   }
+   else {
+      str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
+      args.GetReturnValue().Set(str);
+   }
 
    return;
 }
@@ -483,6 +555,7 @@ void mclass::Reset(const FunctionCallbackInfo<Value>& args)
    clx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    pcon->argc = args.Length();
@@ -500,6 +573,8 @@ void mclass::Reset(const FunctionCallbackInfo<Value>& args)
 
    DBX_DBFUN_START(c, pcon);
 
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = c->ClassReference(c, args, pcon, NULL, 0, async);
 
    rc = pcon->p_isc_so->p_CacheInvokeClassMethod(pcon->cargc - 2);
@@ -515,7 +590,7 @@ void mclass::Reset(const FunctionCallbackInfo<Value>& args)
    DBX_DB_UNLOCK(rc);
 
    if (pcon->output_val.type != DBX_TYPE_OREF) {
-      str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+      str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
       args.GetReturnValue().Set(str);
       return;
    }

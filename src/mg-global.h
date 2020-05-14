@@ -57,6 +57,8 @@ public:
    static int        delete_mglobal_template (mglobal *cx);
 
    static void       Get         (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       Get_bx      (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void       GetEx       (const v8::FunctionCallbackInfo<v8::Value>& args, int binary);
    static void       Set         (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void       Defined     (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void       Delete      (const v8::FunctionCallbackInfo<v8::Value>& args);

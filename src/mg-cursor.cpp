@@ -190,6 +190,9 @@ void mcursor::Execute(const FunctionCallbackInfo<Value>& args)
    cx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
    pcon->psql = cx->psql;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
@@ -252,6 +255,9 @@ void mcursor::Cleanup(const FunctionCallbackInfo<Value>& args)
    cx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
    pcon->psql = cx->psql;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
@@ -287,7 +293,7 @@ void mcursor::Cleanup(const FunctionCallbackInfo<Value>& args)
 
    DBX_DBFUN_END(c);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
    return;
 }
@@ -308,6 +314,9 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
    cx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
@@ -350,7 +359,7 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
             return;
          }
 */
-         key = dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, c->utf8);
+         key = dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, pcon->utf8);
          args.GetReturnValue().Set(key);
       }
       else {
@@ -367,7 +376,7 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
             obj = DBX_OBJECT_NEW();
 
             key = dbx_new_string8(isolate, (char *) "key", 0);
-            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, c->utf8));
+            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, pcon->utf8));
             key = dbx_new_string8(isolate, (char *) "data", 0);
             DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 0));
             args.GetReturnValue().Set(obj);
@@ -441,7 +450,7 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
          args.GetReturnValue().Set(DBX_NULL());
       }
       else {
-         key = dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, c->utf8);
+         key = dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, pcon->utf8);
          args.GetReturnValue().Set(key);
       }
       return;
@@ -499,6 +508,9 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
    cx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
@@ -530,7 +542,7 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
          args.GetReturnValue().Set(DBX_NULL());
       }
       else if (cx->getdata == 0) {
-         key = dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, c->utf8);
+         key = dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, pcon->utf8);
          args.GetReturnValue().Set(key);
       }
       else {
@@ -547,7 +559,7 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
             obj = DBX_OBJECT_NEW();
 
             key = dbx_new_string8(isolate, (char *) "key", 0);
-            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, c->utf8));
+            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, pcon->utf8));
             key = dbx_new_string8(isolate, (char *) "data", 0);
             DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 0));
             args.GetReturnValue().Set(obj);
@@ -624,7 +636,7 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
          args.GetReturnValue().Set(DBX_NULL());
       }
       else {
-         key = dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, c->utf8);
+         key = dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, pcon->utf8);
          args.GetReturnValue().Set(key);
       }
       return;
@@ -677,6 +689,10 @@ void mcursor::Reset(const FunctionCallbackInfo<Value>& args)
    cx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
+
    pcon->argc = args.Length();
 
    if (pcon->argc < 1) {
@@ -705,6 +721,7 @@ void mcursor::Close(const FunctionCallbackInfo<Value>& args)
    cx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
    pcon->argc = args.Length();
 
    if (pcon->argc >= DBX_MAXARGS) {

@@ -74,6 +74,11 @@ Version 1.4.10 6 May 2020:
    Introduce support for the M Merge command.
    Correct a fault in the Cursor Reset method.
 
+Version 1.4.11 14 May 2020:
+   Introduce a scheme for transmitting binary data between Node.js and the database.
+   Correct a fault that led to some calls failing with incorrect data types after calls to the mglobal::increment method.
+   Pass arguments to YottaDB functions as ydb_string_t types and not ydb_char_t.
+
 */
 
 #include "mg-dbx.h"
@@ -187,10 +192,12 @@ void DBX_DBNAME::Init(Handle<Object> exports)
 #endif
 
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "version", Version);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "charset", Charset);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "open", Open);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "close", Close);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "namespace", Namespace);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "get", Get);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "get_bx", Get_bx);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "set", Set);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "defined", Defined);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "delete", Delete);
@@ -204,7 +211,9 @@ void DBX_DBNAME::Init(Handle<Object> exports)
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "mglobalquery", MGlobalQuery);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "mglobalquery_close", MGlobalQuery_Close);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "function", ExtFunction);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "function_bx", ExtFunction_bx);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "classmethod", ClassMethod);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "classmethod_bx", ClassMethod_bx);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "classmethod_close", ClassMethod_Close);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "sql", SQL);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "sql_close", SQL_Close);
@@ -255,7 +264,6 @@ void DBX_DBNAME::New(const FunctionCallbackInfo<Value>& args)
    c->open = 0;
 
    c->csize = 8;
-   c->utf8 = 1; /* seems to be faster with UTF8 on! */
 
    c->pcon = NULL;
 
@@ -278,15 +286,18 @@ void DBX_DBNAME::New(const FunctionCallbackInfo<Value>& args)
    c->pcon->output_val.svalue.len_alloc = 32000;
    c->pcon->output_val.svalue.len_used = 0;
 
-   c->pcon->ibuffer = (unsigned char *) dbx_malloc(CACHE_MAXSTRLEN, 0);
-   memset((void *) c->pcon->ibuffer, 0, 15);
+   c->pcon->ibuffer = (unsigned char *) dbx_malloc(CACHE_MAXSTRLEN + DBX_IBUFFER_OFFSET, 0);
+   memset((void *) c->pcon->ibuffer, 0, DBX_IBUFFER_OFFSET);
    dbx_add_block_size(c->pcon->ibuffer + 5, 0, CACHE_MAXSTRLEN, 0, 0);
-
-   c->pcon->ibuffer += 15; /* v1.4.10 */
-
+   c->pcon->ibuffer += DBX_IBUFFER_OFFSET; /* v1.4.10 */
    c->pcon->ibuffer_used = 0;
-   c->pcon->ibuffer_size = 32000;
+   c->pcon->ibuffer_size = CACHE_MAXSTRLEN;
+
+   c->pcon->utf8 = 1; /* seems to be faster with UTF8 on! */
    c->pcon->use_mutex = 0;
+   c->pcon->binary = 0;
+   c->pcon->lock = 0;
+   c->pcon->increment = 0;
 
    c->pcon->psql = NULL;
    c->pcon->p_isc_so = NULL;
@@ -375,8 +386,14 @@ async_rtn DBX_DBNAME::dbx_invoke_callback(uv_work_t *req)
    else
       argv[0] = DBX_INTEGER_NEW(false);
 
-   baton->result_str = dbx_new_string8n(isolate, baton->pcon->output_val.svalue.buf_addr, baton->pcon->output_val.svalue.len_used, baton->c->utf8);
-   argv[1] = baton->result_str;
+   if (baton->c->pcon->binary) {
+      baton->result_obj = node::Buffer::New(isolate, (char *) baton->c->pcon->output_val.svalue.buf_addr, (size_t) baton->c->pcon->output_val.svalue.len_used).ToLocalChecked();
+      argv[1] = baton->result_obj;
+   }
+   else {
+      baton->result_str = dbx_new_string8n(isolate, baton->pcon->output_val.svalue.buf_addr, baton->pcon->output_val.svalue.len_used, baton->c->pcon->utf8);
+      argv[1] = baton->result_str;
+   }
 
 #if DBX_NODE_VERSION < 80000
    TryCatch try_catch;
@@ -480,6 +497,9 @@ void DBX_DBNAME::Version(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
 
    js_narg = args.Length();
 
@@ -497,6 +517,71 @@ void DBX_DBNAME::Version(const FunctionCallbackInfo<Value>& args)
 }
 
 
+/* 1.4.11 */
+void DBX_DBNAME::Charset(const FunctionCallbackInfo<Value>& args)
+{
+   int js_narg, str_len;
+   char buffer[32];
+   DBXCON *pcon;
+   Local<String> str;
+   Local<String> result;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   DBX_GET_ICONTEXT;
+   c->dbx_count ++;
+
+   pcon = c->pcon;
+   pcon->binary = 0;
+
+   js_narg = args.Length();
+
+   if (js_narg == 0) {
+      if (pcon->utf8 == 0) {
+         strcpy(buffer, "ascii");
+      }
+      else {
+         strcpy(buffer, "utf-8");
+      }
+      result = dbx_new_string8(isolate, (char *) buffer, pcon->utf8);
+      args.GetReturnValue().Set(result);
+      return;
+   }
+
+   result = dbx_new_string8(isolate, (char *) buffer, pcon->utf8);
+   args.GetReturnValue().Set(result);
+
+   if (js_narg != 1) {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The Charset method takes one argument", 1)));
+      return;
+   }
+   str = DBX_TO_STRING(args[0]);
+   str_len = dbx_string8_length(isolate, str, 0);
+   if (str_len > 30) {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Invalid 'character set' argument supplied to the SetCharset method", 1)));
+      return;
+   }
+
+   DBX_WRITE_UTF8(str, buffer);
+   dbx_lcase(buffer);
+
+   if (strstr(buffer, "ansi") || strstr(buffer, "ascii") || strstr(buffer, "8859") || strstr(buffer, "1252")) {
+      pcon->utf8 = 0;
+      strcpy(buffer, "ascii");
+   }
+   else if (strstr(buffer, "utf8") || strstr(buffer, "utf-8")) {
+      pcon->utf8 = 1;
+      strcpy(buffer, "utf-8");
+   }
+   else {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Invalid 'character set' argument supplied to the SetCharset method", 1)));
+      return;
+   }
+
+   result = dbx_new_string8(isolate, (char *) buffer, pcon->utf8);
+   args.GetReturnValue().Set(result);
+   return;
+}
+
+
 void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
 {
    short async;
@@ -511,6 +596,9 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
 
    DBX_CALLBACK_FUN(js_narg, cb, async);
 
@@ -711,6 +799,9 @@ void DBX_DBNAME::Close(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
 
    DBX_DBFUN_START(c, pcon);
 
@@ -767,6 +858,9 @@ void DBX_DBNAME::Namespace(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
@@ -811,7 +905,7 @@ void DBX_DBNAME::Namespace(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -819,7 +913,7 @@ void DBX_DBNAME::Namespace(const FunctionCallbackInfo<Value>& args)
 
 int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>& args, DBXCON *pcon, DBXGREF *pgref, short context)
 {
-   int n, nx, rc, otype;
+   int n, nx, rc, otype, len;
    char *p;
    char buffer[64];
    DBXVAL *pval;
@@ -910,7 +1004,8 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
 
          if (otype == 2) {
             p = node::Buffer::Data(obj);
-            dbx_ibuffer_add(pcon, isolate, nx, str, p, (int) strlen(p), 0);
+            len = (int) node::Buffer::Length(obj);
+            dbx_ibuffer_add(pcon, isolate, nx, str, p, (int) len, 0);
          }
          else {
             str = DBX_TO_STRING(args[n]);
@@ -951,6 +1046,18 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
 
 void DBX_DBNAME::Get(const FunctionCallbackInfo<Value>& args)
 {
+   return GetEx(args, 0);
+}
+
+
+void DBX_DBNAME::Get_bx(const FunctionCallbackInfo<Value>& args)
+{
+   return GetEx(args, 1);
+}
+
+
+void DBX_DBNAME::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
+{
    short async;
    int rc;
    DBXCON *pcon;
@@ -960,6 +1067,7 @@ void DBX_DBNAME::Get(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = binary;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
@@ -1020,8 +1128,14 @@ void DBX_DBNAME::Get(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
-   args.GetReturnValue().Set(result);
+   if (binary) {
+      Local<Object> bx = node::Buffer::New(isolate, (char *) pcon->output_val.svalue.buf_addr, (size_t) pcon->output_val.svalue.len_used).ToLocalChecked();
+      args.GetReturnValue().Set(bx);
+   }
+   else {
+      result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
+      args.GetReturnValue().Set(result);
+   }
 }
 
 
@@ -1036,6 +1150,7 @@ void DBX_DBNAME::Set(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
@@ -1087,7 +1202,7 @@ void DBX_DBNAME::Set(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -1103,6 +1218,7 @@ void DBX_DBNAME::Defined(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
@@ -1157,7 +1273,7 @@ void DBX_DBNAME::Defined(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -1173,6 +1289,7 @@ void DBX_DBNAME::Delete(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
@@ -1225,7 +1342,7 @@ void DBX_DBNAME::Delete(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -1241,6 +1358,7 @@ void DBX_DBNAME::Next(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
@@ -1295,7 +1413,7 @@ void DBX_DBNAME::Next(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -1311,6 +1429,7 @@ void DBX_DBNAME::Previous(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
@@ -1365,7 +1484,7 @@ void DBX_DBNAME::Previous(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
 
    args.GetReturnValue().Set(result);
 }
@@ -1382,6 +1501,7 @@ void DBX_DBNAME::Increment(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
@@ -1435,7 +1555,7 @@ void DBX_DBNAME::Increment(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -1453,6 +1573,7 @@ void DBX_DBNAME::Lock(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
@@ -1532,7 +1653,7 @@ void DBX_DBNAME::Lock(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -1548,6 +1669,7 @@ void DBX_DBNAME::Unlock(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
@@ -1609,7 +1731,7 @@ void DBX_DBNAME::Unlock(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -1623,8 +1745,10 @@ void DBX_DBNAME::MGlobal(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
    pcon->argc = args.Length();
-
 
    /* 1.4.10 */
 
@@ -1706,6 +1830,9 @@ void DBX_DBNAME::MGlobalQuery(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
    pcon->argc = args.Length();
 
    if (pcon->argc < 1) {
@@ -1758,7 +1885,7 @@ void DBX_DBNAME::MGlobalQuery_Close(const FunctionCallbackInfo<Value>& args)
 
 int DBX_DBNAME::ExtFunctionReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>& args, DBXCON *pcon, DBXFREF *pfref, DBXFUN *pfun, short context)
 {
-   int n, nx, rc, otype;
+   int n, nx, rc, otype, len;
    char *p;
    char buffer[64];
    Local<Object> obj;
@@ -1818,7 +1945,8 @@ int DBX_DBNAME::ExtFunctionReference(DBX_DBNAME *c, const FunctionCallbackInfo<V
 
          if (otype == 2) {
             p = node::Buffer::Data(obj);
-            dbx_ibuffer_add(pcon, isolate, nx, str, p, (int) strlen(p), 1);
+            len = (int) node::Buffer::Length(obj);
+            dbx_ibuffer_add(pcon, isolate, nx, str, p, (int) len, 1);
          }
          else {
             str = DBX_TO_STRING(args[n]);
@@ -1838,6 +1966,18 @@ int DBX_DBNAME::ExtFunctionReference(DBX_DBNAME *c, const FunctionCallbackInfo<V
 
 void DBX_DBNAME::ExtFunction(const FunctionCallbackInfo<Value>& args)
 {
+   return ExtFunctionEx(args, 0);
+}
+
+
+void DBX_DBNAME::ExtFunction_bx(const FunctionCallbackInfo<Value>& args)
+{
+   return ExtFunctionEx(args, 1);
+}
+
+
+void DBX_DBNAME::ExtFunctionEx(const FunctionCallbackInfo<Value>& args, int binary)
+{
    short async;
    int rc;
    DBXCON *pcon;
@@ -1848,6 +1988,9 @@ void DBX_DBNAME::ExtFunction(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = binary;
+   pcon->lock = 0;
+   pcon->increment = 0;
 
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
@@ -1903,14 +2046,20 @@ void DBX_DBNAME::ExtFunction(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
-   args.GetReturnValue().Set(result);
+   if (binary) {
+      Local<Object> bx = node::Buffer::New(isolate, (char *) pcon->output_val.svalue.buf_addr, (size_t) pcon->output_val.svalue.len_used).ToLocalChecked();
+      args.GetReturnValue().Set(bx);
+   }
+   else {
+      result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
+      args.GetReturnValue().Set(result);
+   }
 }
 
 
 int DBX_DBNAME::ClassReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>& args, DBXCON *pcon, DBXCREF *pcref, int argc_offset, short context)
 {
-   int n, nx, rc, otype;
+   int n, nx, rc, otype, len;
    char *p;
    char buffer[64];
    Local<Object> obj;
@@ -1985,7 +2134,8 @@ int DBX_DBNAME::ClassReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>&
 
          if (otype == 2) {
             p = node::Buffer::Data(obj);
-            dbx_ibuffer_add(pcon, isolate, nx, str, p, (int) strlen(p), 0);
+            len = (int) node::Buffer::Length(obj);
+            dbx_ibuffer_add(pcon, isolate, nx, str, p, (int) len, 0);
          }
          else {
             str = DBX_TO_STRING(args[n]);
@@ -2016,6 +2166,18 @@ int DBX_DBNAME::ClassReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>&
 
 void DBX_DBNAME::ClassMethod(const FunctionCallbackInfo<Value>& args)
 {
+   return ClassMethodEx(args, 0);
+}
+
+
+void DBX_DBNAME::ClassMethod_bx(const FunctionCallbackInfo<Value>& args)
+{
+   return ClassMethodEx(args, 1);
+}
+
+
+void DBX_DBNAME::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int binary)
+{
    short async;
    int rc;
    char class_name[256];
@@ -2027,6 +2189,8 @@ void DBX_DBNAME::ClassMethod(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = binary;
+
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
@@ -2047,6 +2211,8 @@ void DBX_DBNAME::ClassMethod(const FunctionCallbackInfo<Value>& args)
 
    DBX_DBFUN_START(c, pcon);
 
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = ClassReference(c, args, pcon, NULL, 0, async);
 
    if (async) {
@@ -2085,8 +2251,14 @@ void DBX_DBNAME::ClassMethod(const FunctionCallbackInfo<Value>& args)
    DBX_DB_UNLOCK(rc);
 
    if (pcon->output_val.type != DBX_TYPE_OREF) {
-      str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
-      args.GetReturnValue().Set(str);
+      if (binary) {
+         Local<Object> bx = node::Buffer::New(isolate, (char *) pcon->output_val.svalue.buf_addr, (size_t) pcon->output_val.svalue.len_used).ToLocalChecked();
+         args.GetReturnValue().Set(bx);
+      }
+      else {
+         str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
+         args.GetReturnValue().Set(str);
+      }
       return;
    }
 
@@ -2137,6 +2309,9 @@ void DBX_DBNAME::SQL(const FunctionCallbackInfo<Value>& args)
    c->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
    pcon->argc = args.Length();
 
    if (pcon->argc < 1) {
@@ -2461,11 +2636,27 @@ int dbx_ibuffer_add(DBXCON *pcon, v8::Isolate * isolate, int argn, v8::Local<v8:
    else
       len = dbx_string8_length(isolate, str, pcon->utf8);
 
+   /* 1.4.11 resize input buffer if necessary */
+
+   if ((pcon->ibuffer_used + len + 32) > pcon->ibuffer_size) {
+      p = (unsigned char *) dbx_malloc(sizeof(char) * (pcon->ibuffer_used + len + CACHE_MAXSTRLEN + DBX_IBUFFER_OFFSET), 301);
+      if (p) {
+         memcpy((void *) p, (void *) (pcon->ibuffer - DBX_IBUFFER_OFFSET), (size_t) (pcon->ibuffer_used + DBX_IBUFFER_OFFSET));
+         dbx_free((void *) (pcon->ibuffer - DBX_IBUFFER_OFFSET), 301);
+         pcon->ibuffer = (p + DBX_IBUFFER_OFFSET);
+         pcon->ibuffer_size = (pcon->ibuffer_used + len + CACHE_MAXSTRLEN);
+      }
+      else {
+         return 0;
+      }
+   }
+
    phead = (pcon->ibuffer + pcon->ibuffer_used);
    pcon->ibuffer_used += 5;
    p = (pcon->ibuffer + pcon->ibuffer_used);
+
    if (buffer) {
-      T_STRNCPY((char *) p, (pcon->ibuffer_size - pcon->ibuffer_used), buffer, len);
+      T_MEMCPY((void *) p, (void *) buffer, (size_t) len); /* 1.4.11 */
    }
    else {
       dbx_write_char8(isolate, str, (char *) p, pcon->utf8);
@@ -2565,7 +2756,7 @@ int dbx_global_reset(const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolat
          obj = dbx_is_object(args[n], &otype);
          if (otype == 2) {
             p = node::Buffer::Data(obj);
-            len = (int) strlen(p);
+            len = (int) node::Buffer::Length(obj);
             pval = (DBXVAL *) dbx_malloc(sizeof(DBXVAL) + len + 32, 0);
             pval->type = DBX_TYPE_STR;
             pval->svalue.buf_addr = ((char *) pval) + sizeof(DBXVAL);
@@ -4501,22 +4692,38 @@ int ydb_error_message(DBXCON *pcon, int error_code)
 int ydb_function(DBXCON *pcon, DBXFUN *pfun)
 {
    int rc;
+   ydb_string_t out, in1, in2, in3;
 
    pcon->output_val.svalue.len_used = 0;
    pcon->output_val.svalue.buf_addr[0] = '\0';
 
+   out.address = (char *) pcon->output_val.svalue.buf_addr;
+   out.length = (unsigned long) pcon->output_val.svalue.len_alloc;
+
    switch (pcon->argc) {
       case 1:
-         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, pcon->output_val.svalue.buf_addr);
+         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, &out);
          break;
       case 2:
-         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, pcon->output_val.svalue.buf_addr, pcon->args[1].svalue.buf_addr);
+         in1.address = (char *) pcon->args[1].svalue.buf_addr;
+         in1.length = (unsigned long) pcon->args[1].svalue.len_used;;
+         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, &out, &in1);
          break;
       case 3:
-         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, pcon->output_val.svalue.buf_addr, pcon->args[1].svalue.buf_addr, pcon->args[2].svalue.buf_addr);
+         in1.address = (char *) pcon->args[1].svalue.buf_addr;
+         in1.length = (unsigned long) pcon->args[1].svalue.len_used;;
+         in2.address = (char *) pcon->args[2].svalue.buf_addr;
+         in2.length = (unsigned long) pcon->args[2].svalue.len_used;;
+         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, &out, &in1, &in2);
          break;
       case 4:
-         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, pcon->output_val.svalue.buf_addr, pcon->args[1].svalue.buf_addr, pcon->args[2].svalue.buf_addr, pcon->args[3].svalue.buf_addr);
+         in1.address = (char *) pcon->args[1].svalue.buf_addr;
+         in1.length = (unsigned long) pcon->args[1].svalue.len_used;;
+         in2.address = (char *) pcon->args[2].svalue.buf_addr;
+         in2.length = (unsigned long) pcon->args[2].svalue.len_used;;
+         in3.address = (char *) pcon->args[3].svalue.buf_addr;
+         in3.length = (unsigned long) pcon->args[3].svalue.len_used;
+         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, &out, &in1, &in2, &in3);
          break;
       default:
          rc = CACHE_SUCCESS;
@@ -5228,13 +5435,15 @@ int dbx_merge(DBXCON *pcon)
 
    DBX_DB_LOCK(rc, 0);
 
+   pcon->lock = 0;
+   pcon->increment = 0;
    if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
       pfun = &fun;
       dbx_add_block_size(pcon->ibuffer, pcon->ibuffer_used, 0,  DBX_DSORT_EOD, DBX_DTYPE_STR);
       pcon->ibuffer_used += 5;
 
-      netbuf = (pcon->ibuffer - 15);
-      netbuf_used = (pcon->ibuffer_used + 15);
+      netbuf = (pcon->ibuffer - DBX_IBUFFER_OFFSET);
+      netbuf_used = (pcon->ibuffer_used + DBX_IBUFFER_OFFSET);
       dbx_add_block_size(netbuf, 0, pcon->ibuffer_used + 10,  0, DBX_CMND_GMERGE);
 
       if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
@@ -5423,6 +5632,8 @@ int dbx_function(DBXCON *pcon)
 
    DBX_DB_LOCK(rc, 0);
 
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = dbx_function_reference(pcon, &fun);
 
    if (rc != CACHE_SUCCESS) {
@@ -5496,6 +5707,8 @@ int dbx_classmethod(DBXCON *pcon)
 
    DBX_DB_LOCK(rc, 0);
 
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = dbx_class_reference(pcon, 0);
 
    if (rc != CACHE_SUCCESS) {
@@ -5528,6 +5741,8 @@ int dbx_method(DBXCON *pcon)
 
    DBX_DB_LOCK(rc, 0);
 
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = dbx_class_reference(pcon, 1);
 
    if (rc != CACHE_SUCCESS) {
@@ -5560,6 +5775,8 @@ int dbx_setproperty(DBXCON *pcon)
 
    DBX_DB_LOCK(rc, 0);
 
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = dbx_class_reference(pcon, 2);
 
    if (rc != CACHE_SUCCESS) {
@@ -5592,6 +5809,8 @@ int dbx_getproperty(DBXCON *pcon)
 
    DBX_DB_LOCK(rc, 0);
 
+   pcon->lock = 0;
+   pcon->increment = 0;
    rc = dbx_class_reference(pcon, 3);
 
    if (rc != CACHE_SUCCESS) {
@@ -5657,8 +5876,20 @@ int dbx_sql_execute(DBXCON *pcon)
    DBX_DB_LOCK(rc, 0);
 
    if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      ydb_string_t out, in1, in2, in3;
+
       sprintf(buffer, "%d", pcon->psql->sql_no);
-      rc = pcon->p_ydb_so->p_ydb_ci(fun.label, pcon->output_val.svalue.buf_addr, buffer, pcon->psql->sql_script, params);
+
+      out.address = (char *) pcon->output_val.svalue.buf_addr;
+      out.length = (unsigned long) pcon->output_val.svalue.len_alloc;
+      in1.address = (char *) buffer;
+      in1.length = (unsigned long) strlen(buffer);
+      in2.address = (char *) pcon->psql->sql_script;
+      in2.length = (unsigned long) strlen(pcon->psql->sql_script);
+      in3.address = (char *) params;
+      in3.length = (unsigned long) strlen(params);
+
+      rc = pcon->p_ydb_so->p_ydb_ci(fun.label, &out, &in1, &in2, &in3);
 
       if (rc == YDB_OK) {
          pcon->output_val.svalue.len_used = (unsigned int) dbx_get_size((unsigned char *) pcon->output_val.svalue.buf_addr);
@@ -5771,9 +6002,21 @@ int dbx_sql_row(DBXCON *pcon, int rn, int dir)
    DBX_DB_LOCK(rc, 0);
 
    if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      ydb_string_t out, in1, in2, in3;
+
       sprintf(buffer, "%d", pcon->psql->sql_no);
       sprintf(rowstr, "%d", rn);
-      rc = pcon->p_ydb_so->p_ydb_ci(fun.label, pcon->output_val.svalue.buf_addr, buffer, rowstr, params);
+
+      out.address = (char *) pcon->output_val.svalue.buf_addr;
+      out.length = (unsigned long) pcon->output_val.svalue.len_alloc;
+      in1.address = (char *) buffer;
+      in1.length = (unsigned long) strlen(buffer);
+      in2.address = (char *) rowstr;
+      in2.length = (unsigned long) strlen(rowstr);
+      in3.address = (char *) params;
+      in3.length = (unsigned long) strlen(params);
+
+      rc = pcon->p_ydb_so->p_ydb_ci(fun.label, &out, &in1, &in2, &in3);
 
       if (rc == YDB_OK) {
          pcon->output_val.svalue.len_used = (unsigned int) dbx_get_size((unsigned char *) pcon->output_val.svalue.buf_addr);
@@ -5872,8 +6115,18 @@ int dbx_sql_cleanup(DBXCON *pcon)
    DBX_DB_LOCK(rc, 0);
 
    if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      ydb_string_t out, in1, in2;
+
       sprintf(buffer, "%d", pcon->psql->sql_no);
-      rc = pcon->p_ydb_so->p_ydb_ci(fun.label, pcon->output_val.svalue.buf_addr, buffer, params);
+
+      out.address = (char *) pcon->output_val.svalue.buf_addr;
+      out.length = (unsigned long) pcon->output_val.svalue.len_alloc;
+      in1.address = (char *) buffer;
+      in1.length = (unsigned long) strlen(buffer);
+      in2.address = (char *) params;
+      in2.length = (unsigned long) strlen(params);
+
+      rc = pcon->p_ydb_so->p_ydb_ci(fun.label, &out, &in1, &in2);
 
       if (rc == YDB_OK) {
          pcon->output_val.svalue.len_used = (unsigned int) dbx_get_size((unsigned char *) pcon->output_val.svalue.buf_addr);

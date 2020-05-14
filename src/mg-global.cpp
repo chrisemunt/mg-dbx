@@ -73,6 +73,7 @@ void mglobal::Init(Handle<Object> exports)
    /* Prototypes */
 
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "get", Get);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "get_bx", Get_bx);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "set", Set);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "defined", Defined);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "delete", Delete);
@@ -199,6 +200,18 @@ int mglobal::delete_mglobal_template(mglobal *cx)
 
 void mglobal::Get(const FunctionCallbackInfo<Value>& args)
 {
+   return GetEx(args, 0);
+}
+
+
+void mglobal::Get_bx(const FunctionCallbackInfo<Value>& args)
+{
+   return GetEx(args, 1);
+}
+
+
+void mglobal::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
+{
    short async;
    int rc;
    DBXCON *pcon;
@@ -211,6 +224,7 @@ void mglobal::Get(const FunctionCallbackInfo<Value>& args)
    gx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = binary;
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
@@ -265,9 +279,15 @@ void mglobal::Get(const FunctionCallbackInfo<Value>& args)
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
-
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
-   args.GetReturnValue().Set(result);
+   
+   if (binary) {
+      Local<Object> bx = node::Buffer::New(isolate, (char *) pcon->output_val.svalue.buf_addr, (size_t) pcon->output_val.svalue.len_used).ToLocalChecked();
+      args.GetReturnValue().Set(bx);
+   }
+   else {
+      result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
+      args.GetReturnValue().Set(result);
+   }
 }
 
 
@@ -285,6 +305,7 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
    gx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
@@ -337,7 +358,7 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -356,6 +377,7 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
    gx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
@@ -409,7 +431,7 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -428,6 +450,7 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
    gx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
@@ -479,7 +502,7 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -498,6 +521,7 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
    gx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
@@ -549,7 +573,7 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -568,6 +592,7 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
    gx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
@@ -619,7 +644,7 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
 
    args.GetReturnValue().Set(result);
 }
@@ -639,6 +664,7 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
    gx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
@@ -690,7 +716,7 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -711,6 +737,7 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
    gx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
@@ -792,7 +819,7 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -811,6 +838,7 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
    gx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
@@ -870,7 +898,7 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 }
 
@@ -878,7 +906,7 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
 void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
 {
    short async;
-   int rc, argc, otype, nx, fc, mn, ismglobal, mglobal1;
+   int rc, argc, otype, len, nx, fc, mn, ismglobal, mglobal1;
    char *p;
    char buffer[32];
    DBXCON *pcon;
@@ -894,6 +922,7 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
    gx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
    DBX_CALLBACK_FUN(pcon->argc, cb, async);
 
    if (pcon->argc < 1) {
@@ -903,6 +932,8 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
 
    nx = 0;
    mglobal1 = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
    pcon->args[nx].type = DBX_TYPE_STR;
    pcon->args[nx].sort = DBX_DSORT_GLOBAL;
    dbx_ibuffer_add(pcon, isolate, nx, str, gx->global_name, (int) strlen(gx->global_name), 2);
@@ -963,7 +994,8 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
             pcon->args[nx].sort = DBX_DSORT_DATA;
             if (otype == 2) {
                p = node::Buffer::Data(obj);
-               dbx_ibuffer_add(pcon, isolate, nx ++, str, p, (int) strlen(p), 2);
+               len = (int) node::Buffer::Length(obj);
+               dbx_ibuffer_add(pcon, isolate, nx ++, str, p, (int) len, 2);
             }
             else {
                str = DBX_TO_STRING(args[argc]);
@@ -1022,7 +1054,7 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
 
    DBX_DBFUN_END(c);
 
-   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, c->utf8);
+   result = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
    return;
 }
@@ -1039,6 +1071,9 @@ void mglobal::Reset(const FunctionCallbackInfo<Value>& args)
    gx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
    pcon->argc = args.Length();
 
    if (pcon->argc < 1) {
@@ -1068,6 +1103,9 @@ void mglobal::Close(const FunctionCallbackInfo<Value>& args)
    gx->dbx_count ++;
 
    pcon = c->pcon;
+   pcon->binary = 0;
+   pcon->lock = 0;
+   pcon->increment = 0;
    pcon->argc = args.Length();
 
    if (pcon->argc >= DBX_MAXARGS) {
