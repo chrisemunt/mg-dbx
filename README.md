@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to M-like databases from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-6 May 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+14 May 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v14.
 * [Release Notes](#RelNotes) can be found at the end of this document.
@@ -17,6 +17,7 @@ Contents
 * [Invocation of database functions](#DBFunctions)
 * [Direct access to InterSystems classes (IRIS and Cache)](#DBClasses)
 * [Direct access to SQL: MGSQL and InterSystems SQL (IRIS and Cache)](#DBSQL)
+* [Working with binary data](#Binary)
 * [Using Node.js/V8 worker threads](#Threads)
 * [License](#License)
 
@@ -98,9 +99,9 @@ Note that the version of **zmgsi** is successfully displayed.
 
 Finally, add the following lines to the interface file (**cm.ci** in the example used in the db.open() method).
 
-       sqlemg: ydb_char_t * sqlemg^%zmgsis(I:ydb_char_t*, I:ydb_char_t *, I:ydb_char_t *)
-       sqlrow: ydb_char_t * sqlrow^%zmgsis(I:ydb_char_t*, I:ydb_char_t *, I:ydb_char_t *)
-       sqldel: ydb_char_t * sqldel^%zmgsis(I:ydb_char_t*, I:ydb_char_t *)
+       sqlemg: ydb_string_t * sqlemg^%zmgsis(I:ydb_string_t*, I:ydb_string_t *, I:ydb_string_t *)
+       sqlrow: ydb_string_t * sqlrow^%zmgsis(I:ydb_string_t*, I:ydb_string_t *, I:ydb_string_t *)
+       sqldel: ydb_string_t * sqldel^%zmgsis(I:ydb_string_t*, I:ydb_string_t *)
        ifc_zmgsis: ydb_string_t * ifc^%zmgsis(I:ydb_string_t*, I:ydb_string_t *, I:ydb_string_t*)
 
 
@@ -189,8 +190,16 @@ Assuming an 'out of the box' YottaDB installation under **/usr/local/lib/yottadb
 
 * **multithreaded**: A boolean value to be set to 'true' or 'false' (default **multithreaded: false**).  Set this property to 'true' if the application uses multithreaded techniques in JavaScript (e.g. V8 worker threads).
 
+### Return the version of mg-dbx
 
-#### Returning (and optionally changing) the current directory (or Namespace)
+       var result = db.version();
+
+Example:
+
+       console.log("\nmg-dbx Version: " + db.version());
+
+
+### Returning (and optionally changing) the current directory (or Namespace)
 
        current_namespace = db.namespace([<new_namespace>]);
 
@@ -206,13 +215,24 @@ Example 2 (Change the current Namespace):
 
 * If the operation is successful this method will echo back the new Namespace name.  If not successful, the method will return the name of the current (unchanged) Namespace.
 
-### Return the version of mg-dbx
 
-       var result = db.version();
+### Returning (and optionally changing) the current character set
 
-Example:
+UTF-8 is the default character encoding for **mg-dbx**.  The other option is the 8-bit ASCII character set (characters of the range ASCII 0 to ASCII 255).  The ASCII character set is a better option when exchanging single-byte binary data with the database.
 
-       console.log("\nmg-dbx Version: " + db.version());
+       current_charset = db.charset([<new_charset>]);
+
+Example 1 (Get the current character set): 
+
+       var charset = db.charset();
+
+Example 2 (Change the current character set): 
+
+       var new_charset = db.charset('ascii');
+
+* If the operation is successful this method will echo back the new character set name.  If not successful, the method will return the name of the current (unchanged) character set.
+* Currently supported character sets and encoding schemes: 'ascii' and 'utf-8'.
+
 
 ### Close database connection
 
@@ -260,6 +280,8 @@ Asynchronous:
 Example:
 
        var name = person.get(1);
+
+* Note: use **get\_bx** to receive the result as a Node.js Buffer.
 
 ### Delete a record
 
@@ -522,6 +544,9 @@ JavaScript invocation:
       result = db.function("add^math", 2, 3);
 
 
+* Note: use **function\_bx** to receive the result as a Node.js Buffer.
+
+
 ## <a name="DBClasses"></a> Direct access to InterSystems classes (IRIS and Cache)
 
 ### Invocation of a ClassMethod
@@ -540,6 +565,9 @@ Asynchronous:
 Example (Encode a date to internal storage format):
 
        result = db.classmethod("%Library.Date", "DisplayToLogical", "10/10/2019");
+
+* Note: use **classmethod\_bx** to receive the result as a Node.js Buffer.
+
 
 ### Creating and manipulating instances of objects
 
@@ -586,6 +614,8 @@ Calculate person's age at a particular date:
 
        today = db.classmethod("%Library.Date", "DisplayToLogical", "10/10/2019");
        var age = person.method("Age", today);
+
+* Note: use **classmethod\_bx**, **method\_bx** and **getproperty\_bx** to receive data as a Node.js Buffer.
 
 ### Reusing an object container
 
@@ -703,9 +733,46 @@ Asynchronous:
        <query>.reset({sql: <sql_statement>[, type: <sql_engine>], callback(<error>, <result>));
 
 
+## <a name="Binary"></a> Working with binary data
+
+In **mg-dbx** the default character encoding scheme is UTF-8.  When transmitting binary data between the database and Node.js there are two options.
+
+* Switch to using the 8-bit ASCII character set.
+* Receive the incoming data into Node.js Buffers.
+
+On the input (to the database) side all **mg-dbx** function arguments can be presented as Node.js Buffers and **mg-dbx** will automatically detect that an argument is a Buffer and process it accordingly.
+
+On the output side the following functions can be used to return the output as a Node.js Buffer.
+
+* dbx::function\_bx
+* dbx::classmethod\_bx
+
+* mglobal::get\_bx
+
+* mclass::classmethod\_bx
+* mclass::method\_bx
+* mclass::getproperty\_bx
+
+These functions work the same way as their non '_bx' suffixed counterparts.  The only difference is that they will return data as a Node.js Buffer as opposed to a type of String.
+
+The following two examples illustrate the two schemes for receiving binary data from the database.
+
+Example 1: Receive binary data from a DB function as a Node.js 8-bit character stream
+
+       <db>.charset('ascii');
+       var stream_str8 = <db>.function(<function>, <parameters>);
+       <db>.charset('utf-8'); // reset character encoding
+
+Example 2: Receive binary data from a DB function as a Node.js Buffer
+
+       var stream_buffer = <db>.function_bx(<function>, <parameters>);
+
+
 ## <a name="Threads"></a> Using Node.js/V8 worker threads
 
 **mg-dbx** functionality can now be used with Node.js/V8 worker threads.  This enhancement is available with Node.js v12 (and later).
+
+* Note: be sure to include the property **multithreaded: true** in the **open** method when opening database  connections to be used in multi-threaded applications.
 
 Use the following constructs for instantiating **mg-dbx** objects in multi-threaded applications:
 
@@ -833,3 +900,9 @@ Unless required by applicable law or agreed to in writing, software distributed 
 	* See the section on 'Using Node.js/V8 worker threads'.
 * Introduce support for the M Merge command.
 * Correct a fault in the mcursor 'Reset' method.
+
+### v1.4.11 (14 May 2020)
+
+* Introduce a scheme for transmitting binary data between Node.js and the database.
+* Correct a fault that led to some calls failing with incorrect data types after calls to the **mglobal::increment** method.
+* **mg-dbx** will now pass arguments to YottaDB functions as **ydb\_string\_t** types and not **ydb\_char\_t**.  Modify your YottaDB function interface file accordingly.  See the section on 'Installing the M support routines'.
