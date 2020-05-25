@@ -1,6 +1,6 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for x86-64 Containers) 2019.4 (Build 379U)" ts="2020-05-25 09:00:00">
-<Routine name="%zmgsi" type="INT" languagemode="0" timestamp="65524,41024"><![CDATA[
+Cache for Windows^INT^zmgsi^~Format=Cache.S~^RAW
+%RO on 25 May 2020 01:00 AM
+%zmgsi^INT^1^65524,41024.0^0
 %zmgsi ;(CM) Service Integration - Core Server
  ;
  ;  ----------------------------------------------------------------------------
@@ -326,10 +326,8 @@ ylink ; link all routines
  zlink "_zmgsis.m"
  q
  ;
-]]></Routine>
 
-
-<Routine name="%zmgsis" type="INT" languagemode="0" timestamp="65524,41024"><![CDATA[
+%zmgsis^INT^1^65524,41024.0^0
 %zmgsis ;(CM) Service Integration - Child Process
  ;
  ;  ----------------------------------------------------------------------------
@@ -2194,5 +2192,6 @@ sqldel(id,params) ; Delete SQL result set
  q ""
  ;
 
-]]></Routine>
-</Export>
+
+
+
