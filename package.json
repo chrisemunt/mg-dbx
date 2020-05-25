@@ -1,8 +1,8 @@
 {
   "author": "Chris Munt <cmunt@mgateway.com> (http://www.gateway.com/)",
   "name": "mg-dbx",
-  "description": "High speed Synchronous and Asynchronous access to M-like databases from Node.js.",
-  "version": "1.4.11",
+  "description": "High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.",
+  "version": "2.0.12",
   "maintainers": "Chris Munt <cmunt@mgateway.com>",
   "homepage": "https://github.com/chrisemunt/mg-dbx",
   "repository": {

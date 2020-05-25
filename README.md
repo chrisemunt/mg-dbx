@@ -1,11 +1,12 @@
 # mg-dbx
 
-High speed Synchronous and Asynchronous access to M-like databases from Node.js.
+High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-14 May 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+25 May 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v14.
+* Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
 Contents
@@ -58,14 +59,33 @@ Assuming that Node.js is already installed and a C++ compiler is available to th
 
 This command will create the **mg-dbx** addon (*mg-dbx.node*).
 
+
 ### Installing the M support routines
 
 The M support routines are required for:
 
-* Direct access to SQL.
-* The Merge command under YottaDB.
+* Network based access to databases.
+* Direct access to SQL (either via the API or via the network).
+* The Merge command under YottaDB (either via the API or via the network).
 
 Two M routines need to be installed (%zmgsi and %zmgsis).  These can be found in the GitHub source code repository ([https://github.com/chrisemunt/mg-dbx](https://github.com/chrisemunt/mg-dbx))
+
+
+#### Installation for InterSystems Cache/IRIS
+
+For InterSystems IRIS and Cache, log in to the Manager UCI and install the **zmgsi** routines held in either **/m/zmgsi\_cache.xml** or **/m/zmgsi\_iris.xml** as appropriate.
+
+       do $system.OBJ.Load("/m/zmgsi_cache.xml","ck")
+
+Alternatively, for other M systems, log in to the Manager UCI and, using the %RI utility (or similar) load the **zmgsi** routines held in **/m/zmgsi.ro**.
+
+Change to your development UCI and check the installation:
+
+       do ^%zmgsi
+
+       M/Gateway Developments Ltd - Service Integration Gateway
+       Version: 3.3; Revision 8 (25 May 2020)
+
 
 #### Installation for YottaDB
 
@@ -93,7 +113,7 @@ Link all the **zmgsi** routines and check the installation:
        do ^%zmgsi
 
        M/Gateway Developments Ltd - Service Integration Gateway
-       Version: 3.2; Revision 7 (5 May 2020)
+       Version: 3.3; Revision 8 (25 May 2020)
 
 Note that the version of **zmgsi** is successfully displayed.
 
@@ -105,20 +125,65 @@ Finally, add the following lines to the interface file (**cm.ci** in the example
        ifc_zmgsis: ydb_string_t * ifc^%zmgsis(I:ydb_string_t*, I:ydb_string_t *, I:ydb_string_t*)
 
 
-#### Installation for other M systems
+### Setting up the network service (for network based connectivity only)
 
-For InterSystems IRIS and Cache, log in to the Manager UCI and install the **zmgsi** routines held in either **/m/zmgsi\_cache.xml** or **/m/zmgsi\_iris.xml** as appropriate.
+The default TCP server port for **zmgsi** is **7041**.  If you wish to use an alternative port then modify the following instructions accordingly.
 
-       do $system.OBJ.Load("/m/zmgsi_cache.xml","ck")
+#### InterSystems Cache/IRIS
 
-Alternatively, for other M systems, log in to the Manager UCI and, using the %RI utility (or similar) load the **zmgsi** routines held in **/m/zmgsi.ro**.
+Start the Cache/IRIS-hosted concurrent TCP service in the Manager UCI (the %SYS Namespace):
 
-Change to your development UCI and check the installation:
+       do start^%zmgsi(0) 
 
-       do ^%zmgsi
+To use a server TCP port other than 7041, specify it in the start-up command (as opposed to using zero to indicate the default port of 7041).
 
-       M/Gateway Developments Ltd - Service Integration Gateway
-       Version: 3.2; Revision 7 (5 May 2020)
+#### YottaDB
+
+Network connectivity to **YottaDB** is managed via the **xinetd** service.  First create the following launch script (called **zmgsi\_ydb** here):
+
+       /usr/local/lib/yottadb/r122/zmgsi_ydb
+
+Content:
+
+       #!/bin/bash
+       cd /usr/local/lib/yottadb/r122
+       export ydb_dir=/root/.yottadb
+       export ydb_dist=/usr/local/lib/yottadb/r122
+       export ydb_routines="/root/.yottadb/r1.22_x86_64/o*(/root/.yottadb/r1.22_x86_64/r /root/.yottadb/r) /usr/local/lib/yottadb/r122/libyottadbutil.so"
+       export ydb_gbldir="/root/.yottadb/r1.22_x86_64/g/yottadb.gld"
+       $ydb_dist/ydb -r xinetd^%zmgsis
+
+Create the **xinetd** script (called **zmgsi\_xinetd** here): 
+
+       /etc/xinetd.d/zmgsi_xinetd
+
+Content:
+
+       service zmgsi_xinetd
+       {
+            disable         = no
+            type            = UNLISTED
+            port            = 7041
+            socket_type     = stream
+            wait            = no
+            user            = root
+            server          = /usr/local/lib/yottadb/r122/zmgsi_ydb
+       }
+
+* Note: sample copies of **zmgsi\_xinetd** and **zmgsi\_ydb** are included in the **/unix** directory.
+
+Edit the services file:
+
+       /etc/services
+
+Add the following line to this file:
+
+       zmgsi_xinetd          7041/tcp                        # zmgsi
+
+Finally restart the **xinetd** service:
+
+       /etc/init.d/xinetd restart
+
 
 ## <a name="Connect"></a> Connecting to the database
 
@@ -145,6 +210,8 @@ In the following examples, modify all paths (and any user names and passwords) t
 
 #### InterSystems Cache
 
+##### API based connectivity
+
 Assuming Cache is installed under **/opt/cache20181/**
 
            var open = db.open({
@@ -155,8 +222,23 @@ Assuming Cache is installed under **/opt/cache20181/**
                namespace: "USER"
              });
 
+##### Network based connectivity
+
+Assuming Cache is accessed via **localhost** listening on TCP port **7041**
+
+           var open = db.open({
+               type: "Cache",
+               host: "localhost",
+               tcp_port: 7041,
+               username: "_SYSTEM",
+               password: "SYS",
+               namespace: "USER"
+             });
+
 
 #### InterSystems IRIS
+
+##### API based connectivity
 
 Assuming IRIS is installed under **/opt/IRIS20181/**
 
@@ -168,7 +250,22 @@ Assuming IRIS is installed under **/opt/IRIS20181/**
                namespace: "USER"
              });
 
+##### Network based connectivity
+
+Assuming IRIS is accessed via **localhost** listening on TCP port **7041**
+
+           var open = db.open({
+               type: "IRIS",
+               host: "localhost",
+               tcp_port: 7041,
+               username: "_SYSTEM",
+               password: "SYS",
+               namespace: "USER"
+             });
+
 #### YottaDB
+
+##### API based connectivity
 
 Assuming an 'out of the box' YottaDB installation under **/usr/local/lib/yottadb/r122**.
 
@@ -185,6 +282,17 @@ Assuming an 'out of the box' YottaDB installation under **/usr/local/lib/yottadb
                path: "/usr/local/lib/yottadb/r122",
                env_vars: envvars
              });
+
+##### Network based connectivity
+
+Assuming YottaDB is accessed via **localhost** listening on TCP port **7041**
+
+           var open = db.open({
+               type: "YottaDB",
+               host: "localhost",
+               tcp_port: 7041,
+             });
+
 
 #### Additional (optional) properties for the open() method
 
@@ -398,7 +506,7 @@ Example (unlock global node '1'):
 
 ### Merge (or copy) part of one global to another
 
-In order to use the 'Merge' facility with YottaDB the M support routines should be installed.
+* Note: In order to use the 'Merge' facility with YottaDB the M support routines should be installed (**%zmgsi** and **%zmgsis**).
 
 Synchronous (merge from global2 to global1):
 
@@ -634,7 +742,7 @@ Example 2 Reset a container to hold an existing instance (object %Id of 2):
 
 **mg-dbx** provides direct access to the Open Source MGSQL engine ([https://github.com/chrisemunt/mgsql](https://github.com/chrisemunt/mgsql)) and InterSystems SQL (IRIS and Cache).
 
-In order to use this facility the M support routines should be installed.
+* Note: In order to use this facility the M support routines should be installed (**%zmgsi** and **%zmgsis**).
 
 ### Specifying the SQL query
 
@@ -906,3 +1014,9 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Introduce a scheme for transmitting binary data between Node.js and the database.
 * Correct a fault that led to some calls failing with incorrect data types after calls to the **mglobal::increment** method.
 * **mg-dbx** will now pass arguments to YottaDB functions as **ydb\_string\_t** types and not **ydb\_char\_t**.  Modify your YottaDB function interface file accordingly.  See the section on 'Installing the M support routines'.
+
+### v2.0.12 (25 May 2020)
+
+* Introduce the option to connect to a database over the network 
+* Remove the 32K limit on the volume of data that can be sent to the database via the **mg-dbx** methods.
+* Correct a fault that led to the failure of asynchronous calls to the **dbx::function** and **mglobal::previous** methods.
