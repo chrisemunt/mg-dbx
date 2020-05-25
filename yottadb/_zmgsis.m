@@ -34,18 +34,19 @@ a0 d vers q
  ; v2.3.13:   3 February  2019 (Add all-out to xdbc)
  ; v2.3.14:  18 March     2019 (Release as Open Source, Apache v2 license)
  ; v3.0.1:   13 June      2019 (Renamed to %zmgsi and %zmgsis)
- ; v3.1.2:   10 September 2019 (add protocol upgrade for mg_dba library - Go)
- ; v3.2.3:    1 November  2019 (add SQL interface)
+ ; v3.1.2:   10 September 2019 (Add protocol upgrade for mg_dba library - Go)
+ ; v3.2.3:    1 November  2019 (Add SQL interface)
  ; v3.2.4:    8 January   2020 (Add support for $increment to old protocol)
  ; v3.2.5:   17 January   2020 (Finalise the ifc interface)
  ; v3.2.6:    3 February  2020 (Send version of DB back to the client)
  ; v3.2.7:    5 May       2020 (Add the 'Merge' command to the YottaDB API)
+ ; v3.3.8:   25 May       2020 (Add protocol upgrade for mg-dbx - TCP based connectivity from Node.js)
  ;
 v() ; version and date
  n v,r,d
- s v="3.2"
- s r=7
- s d="5 May 2020"
+ s v="3.3"
+ s r=8
+ s d="25 May 2020"
  q v_"."_r_"."_d
  ;
 vers ; version information
@@ -1454,8 +1455,9 @@ dbx(ctx,cmnd,data,len,param) ; entry point from fixed binding
  new $ztrap set $ztrap="zgoto "_$zlevel_":dbxe^%zmgsis"
  s obufsize=$$dsize256($e(data,1,4))
  s idx=$$dsize256($e(data,6,9))
- k %r s offset=11 f %r=1:1:7 s %r(%r,0)=$$dsize256($e(data,offset,offset+3)) d  i '$d(%r(%r)) s %r=%r-1 q
+ k %r s offset=11 f %r=1:1 s %r(%r,0)=$$dsize256($e(data,offset,offset+3)) d  i '$d(%r(%r)) s %r=%r-1 q
  . s %r(%r,1)=$a(data,offset+4)\20,%r(%r,2)=$a(data,offset+4)#20 i %r(%r,1)=9 k %r(%r) q
+ . i %r(%r,1)=-1 k %r(%r) q
  . s %r(%r)=$e(data,offset+5,offset+5+(%r(%r,0)-1))
  . s offset=offset+5+%r(%r,0)
  . q
@@ -1482,13 +1484,13 @@ dbxnet1 ; test
  s len=len-5
  s cmnd=$e(head,5)
  r data#len
- s res=$$dbx(0,cmnd,data,len,param)
+ s res=$$dbx(0,cmnd,data,len,"")
  w res d flush
  g dbxnet1
  ;
 dbxcmnd(%r,%oref,cmnd,res) ; Execute command
  new $ztrap set $ztrap="zgoto "_$zlevel_":dbxcmnde^%zmgsis"
- n buf,data,head,idx,len,obufsize,offset,rc,uci
+ n buf,data,head,idx,len,obufsize,offset,rc,uci,data,sort,type
  s res=""
  i cmnd=2 s res=0 q 0
  i cmnd=3 s res=$$getuci() q 0
@@ -1496,7 +1498,19 @@ dbxcmnd(%r,%oref,cmnd,res) ; Execute command
  i cmnd=11 s @($$dbxglo(%r(1))_$$dbxref(.%r,2,%r-1,0))=%r(%r),res=0 q 0
  i cmnd=12 s res=$g(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0))) q 0
  i cmnd=13 s res=$o(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0))) q 0
+ i cmnd=131 d  q 0
+ . s res=$o(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0)))
+ . s data="" i res'="" s data=$g(^(res))
+ . s sort=1,type=1
+ . s res=$$esize256($l(res))_$c((sort*20)+type)_res_$$esize256($l(data))_$c((sort*20)+type)_data
+ . q
  i cmnd=14 s res=$o(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0)),-1) q 0
+ i cmnd=141 d  q 0
+ . s res=$o(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0)),-1)
+ . s data="" i res'="" s data=$g(^(res))
+ . s sort=1,type=1
+ . s res=$$esize256($l(res))_$c((sort*20)+type)_res_$$esize256($l(data))_$c((sort*20)+type)_data
+ . q
  i cmnd=15 k @($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0)) s res=0 q 0
  i cmnd=16 s res=$d(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0))) q 0
  i cmnd=17 s res=$i(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r-1,0)),%r(%r)) q 0
@@ -1507,11 +1521,27 @@ dbxcmnd(%r,%oref,cmnd,res) ; Execute command
  . s r2=$$dbxglo(%r(i2))_$$dbxref(.%r,i2+1,%r,0)
  . m @r1=@r2
  . q
+ i cmnd=21 s res=$q(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0))) q 0
+ i cmnd=211 d  q 0
+ . s res=$q(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0)))
+ . s data="" i res'="" s data=$g(@res)
+ . s sort=1,type=1
+ . s res=$$esize256($l(res))_$c((sort*20)+type)_res_$$esize256($l(data))_$c((sort*20)+type)_data
+ . q
+ i cmnd=22 s res=$q(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0)),-1) q 0
+ i cmnd=221 d  q 0
+ . s res=$q(@($$dbxglo(%r(1))_$$dbxref(.%r,2,%r,0)),-1)
+ . s data="" i res'="" s data=$g(@res)
+ . s sort=1,type=1
+ . s res=$$esize256($l(res))_$c((sort*20)+type)_res_$$esize256($l(data))_$c((sort*20)+type)_data
+ . q
  i cmnd=31 s res=$$dbxfun(.%r,"$$"_%r(1)_"("_$$dbxref(.%r,2,%r,1)_")") q 0
+ i cmnd=51 s res=$o(@%r(1)) q 0
+ i cmnd=52 s res=$o(@%r(1),-1) q 0
  s res="<SYNTAX>"
  q -1
 dbxcmnde ; Error
- s ze=$$error()
+ s res=$$error()
  q -1
  ;
 dbxglo(glo) ; Generate global name
@@ -1602,3 +1632,4 @@ sqldel(id,params) ; Delete SQL result set
  k ^mgsqls($j,id)
  q ""
  ;
+
