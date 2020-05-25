@@ -31,9 +31,9 @@
 
 #define DBX_NODE_VERSION         (NODE_MAJOR_VERSION * 10000) + (NODE_MINOR_VERSION * 100) + NODE_PATCH_VERSION
 
-#define DBX_VERSION_MAJOR        "1"
-#define DBX_VERSION_MINOR        "4"
-#define DBX_VERSION_BUILD        "11"
+#define DBX_VERSION_MAJOR        "2"
+#define DBX_VERSION_MINOR        "0"
+#define DBX_VERSION_BUILD        "12"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -149,20 +149,6 @@ DISABLE_WCAST_FUNCTION_TYPE
 
 #define DBX_TEXT_E_ASYNC         "Unable to process task asynchronously"
 
-#define DBX_TYPE_NONE            -1
-#define DBX_TYPE_STR             -2
-#define DBX_TYPE_STR8            0
-#define DBX_TYPE_STR16           1
-#define DBX_TYPE_STROBJ          2
-#define DBX_TYPE_INT             3
-#define DBX_TYPE_INT64           4
-#define DBX_TYPE_DOUBLE          5
-#define DBX_TYPE_OREF            6
-#define DBX_TYPE_BUF             7
-#define DBX_TYPE_NULL            10
-
-#define DBX_XTYPE                21
-
 #define DBX_DSORT_INVALID        0
 #define DBX_DSORT_DATA           1
 #define DBX_DSORT_SUBSCRIPT      2
@@ -174,13 +160,16 @@ DISABLE_WCAST_FUNCTION_TYPE
 #define DBX_DSORT_ISVALID(a)     ((a == DBX_DSORT_GLOBAL) || (a == DBX_DSORT_SUBSCRIPT) || (a == DBX_DSORT_DATA) || (a == DBX_DSORT_EOD) || (a == DBX_DSORT_STATUS) || (a == DBX_DSORT_ERROR))
 
 #define DBX_DTYPE_NONE           0
-#define DBX_DTYPE_DBXSTR         1
-#define DBX_DTYPE_STR            2
+#define DBX_DTYPE_STR            1
+#define DBX_DTYPE_STR8           2
+#define DBX_DTYPE_STR16          3
 #define DBX_DTYPE_INT            4
 #define DBX_DTYPE_INT64          5
 #define DBX_DTYPE_DOUBLE         6
 #define DBX_DTYPE_OREF           7
 #define DBX_DTYPE_NULL           10
+#define DBX_DTYPE_STROBJ         11
+
 
 #define DBX_CMND_OPEN            1
 #define DBX_CMND_CLOSE           2
@@ -190,7 +179,9 @@ DISABLE_WCAST_FUNCTION_TYPE
 #define DBX_CMND_GSET            11
 #define DBX_CMND_GGET            12
 #define DBX_CMND_GNEXT           13
+#define DBX_CMND_GNEXTDATA       131
 #define DBX_CMND_GPREVIOUS       14
+#define DBX_CMND_GPREVIOUSDATA   141
 #define DBX_CMND_GDELETE         15
 #define DBX_CMND_GDEFINED        16
 #define DBX_CMND_GINCREMENT      17
@@ -198,12 +189,20 @@ DISABLE_WCAST_FUNCTION_TYPE
 #define DBX_CMND_GUNLOCK         19
 #define DBX_CMND_GMERGE          20
 
+#define DBX_CMND_GNNODE          21
+#define DBX_CMND_GNNODEDATA      211
+#define DBX_CMND_GPNODE          22
+#define DBX_CMND_GPNODEDATA      221
+
 #define DBX_CMND_FUNCTION        31
 
 #define DBX_CMND_CCMETH          41
 #define DBX_CMND_CGETP           42
 #define DBX_CMND_CSETP           43
 #define DBX_CMND_CMETH           44
+
+#define DBX_CMND_GNAMENEXT       51
+#define DBX_CMND_GNAMEPREVIOUS   52
 
 #define DBX_IBUFFER_OFFSET       15
 
@@ -454,6 +453,7 @@ typedef void            *DBXPROC;
 typedef unsigned long   DWORD;
 #endif
 typedef unsigned long   WORD;
+typedef int             SOCKET;
 
 #endif /* #if defined(_WIN32) */
 
@@ -842,8 +842,19 @@ typedef struct tagDBXCON {
    DBXSQL         *psql;
    DBXMUTEX       *p_mutex;
    DBXZV          *p_zv;
+
    DBXISCSO       *p_isc_so;
    DBXYDBSO       *p_ydb_so;
+
+   short          net_connection;
+   int            tcp_port;
+   char           net_host[128];
+   int            error_no;
+   int            timeout;
+   int            eof;
+   SOCKET         cli_socket;
+   char           info[256];
+   DBXZV          zv;
 
    int            (* p_dbxfun) (struct tagDBXCON * pcon);
 
@@ -1000,6 +1011,7 @@ int                        ydb_parse_zv               (char *zv, DBXZV * p_isc_s
 int                        ydb_change_namespace       (DBXCON *pcon, char *nspace);
 int                        ydb_get_namespace          (DBXCON *pcon, char *nspace, int nspace_len);
 int                        ydb_error_message          (DBXCON *pcon, int error_code);
+int                        ydb_error                  (DBXCON *pcon, int error_code);
 int                        ydb_function               (DBXCON *pcon, DBXFUN *pfun);
 
 int                        dbx_version                (DBXCON *pcon);

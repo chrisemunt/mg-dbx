@@ -133,19 +133,25 @@ void mclass::New(const FunctionCallbackInfo<Value>& args)
             dbx_write_char8(isolate, DBX_TO_STRING(args[1]), obj->class_name, obj->c->pcon->utf8);
             if (argc > 2) {
                DBX_DBFUN_START(c, c->pcon);
+               c->pcon->ibuffer_used = 0;
                c->pcon->lock = 0;
                c->pcon->increment = 0;
-               rc = c->ClassReference(c, args, c->pcon, NULL, 1, 0);
-               rc = pcon->p_isc_so->p_CacheInvokeClassMethod(pcon->cargc - 2);
-               if (rc == CACHE_SUCCESS) {
-                  rc = isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+               rc = c->ClassReference(c, args, c->pcon, NULL, 1, pcon->net_connection);
+               if (c->pcon->net_connection) {
+                  rc = dbx_classmethod(pcon);
                }
                else {
+                  rc = pcon->p_isc_so->p_CacheInvokeClassMethod(pcon->cargc - 2);
+                  if (rc == CACHE_SUCCESS) {
+                     rc = isc_pop_value(pcon, &(pcon->output_val), DBX_DTYPE_STR);
+                  }
+               }
+               if (rc != CACHE_SUCCESS) {
                   dbx_error_message(pcon, rc);
                }
                DBX_DBFUN_END(c);
                DBX_DB_UNLOCK(rc);
-               if (pcon->output_val.type == DBX_TYPE_OREF) {
+               if (pcon->output_val.type == DBX_DTYPE_OREF) {
                   obj->oref =  pcon->output_val.num.oref;
                }
             }
@@ -239,7 +245,7 @@ void mclass::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int binary)
    cref.optype = 0;
    pcon->lock = 0;
    pcon->increment = 0;
-   rc = c->ClassReference(c, args, pcon, &cref, 0, async);
+   rc = c->ClassReference(c, args, pcon, &cref, 0, (async || pcon->net_connection));
 
    if (async) {
       DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pcon);
@@ -257,19 +263,24 @@ void mclass::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int binary)
       return;
    }
 
-   rc = pcon->p_isc_so->p_CacheInvokeClassMethod(pcon->cargc - 2);
-
-   if (rc == CACHE_SUCCESS) {
-      rc = isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+   if (pcon->net_connection) {
+      rc = dbx_classmethod(pcon);
    }
    else {
+      rc = pcon->p_isc_so->p_CacheInvokeClassMethod(pcon->cargc - 2);
+      if (rc == CACHE_SUCCESS) {
+         rc = isc_pop_value(pcon, &(pcon->output_val), DBX_DTYPE_STR);
+      }
+   }
+
+   if (rc != CACHE_SUCCESS) {
       dbx_error_message(pcon, rc);
    }
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   if (pcon->output_val.type != DBX_TYPE_OREF) {
+   if (pcon->output_val.type != DBX_DTYPE_OREF) {
       if (binary) {
          Local<Object> bx = node::Buffer::New(isolate, (char *) pcon->output_val.svalue.buf_addr, (size_t) pcon->output_val.svalue.len_used).ToLocalChecked();
          args.GetReturnValue().Set(bx);
@@ -335,7 +346,7 @@ void mclass::MethodEx(const FunctionCallbackInfo<Value>& args, int binary)
    cref.optype = 1;
    pcon->lock = 0;
    pcon->increment = 0;
-   rc = c->ClassReference(c, args, pcon, &cref, 0, async);
+   rc = c->ClassReference(c, args, pcon, &cref, 0, (async || pcon->net_connection));
 
    if (async) {
       DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pcon);
@@ -353,19 +364,24 @@ void mclass::MethodEx(const FunctionCallbackInfo<Value>& args, int binary)
       return;
    }
 
-   rc = pcon->p_isc_so->p_CacheInvokeMethod(pcon->cargc - 2);
-
-   if (rc == CACHE_SUCCESS) {
-      rc = isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+   if (pcon->net_connection) {
+      rc = dbx_method(pcon);
    }
    else {
+      rc = pcon->p_isc_so->p_CacheInvokeMethod(pcon->cargc - 2);
+      if (rc == CACHE_SUCCESS) {
+         rc = isc_pop_value(pcon, &(pcon->output_val), DBX_DTYPE_STR);
+      }
+   }
+
+   if (rc != CACHE_SUCCESS) {
       dbx_error_message(pcon, rc);
    }
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   if (pcon->output_val.type != DBX_TYPE_OREF) {
+   if (pcon->output_val.type != DBX_DTYPE_OREF) {
       if (binary) {
          Local<Object> bx = node::Buffer::New(isolate, (char *) pcon->output_val.svalue.buf_addr, (size_t) pcon->output_val.svalue.len_used).ToLocalChecked();
          args.GetReturnValue().Set(bx);
@@ -419,7 +435,7 @@ void mclass::SetProperty(const FunctionCallbackInfo<Value>& args)
    cref.optype = 2;
    pcon->lock = 0;
    pcon->increment = 0;
-   rc = c->ClassReference(c, args, pcon, &cref, 0, async);
+   rc = c->ClassReference(c, args, pcon, &cref, 0, (async || pcon->net_connection));
 
    if (async) {
       DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pcon);
@@ -437,10 +453,15 @@ void mclass::SetProperty(const FunctionCallbackInfo<Value>& args)
       return;
    }
 
-   rc = pcon->p_isc_so->p_CacheSetProperty();
+   if (pcon->net_connection) {
+      rc = dbx_setproperty(pcon);
+   }
+   else {
+      rc = pcon->p_isc_so->p_CacheSetProperty();
+   }
 
    if (rc == CACHE_SUCCESS) {
-      dbx_create_string(&(pcon->output_val.svalue), (void *) &rc, DBX_TYPE_INT);
+      dbx_create_string(&(pcon->output_val.svalue), (void *) &rc, DBX_DTYPE_INT);
    }
    else {
       dbx_error_message(pcon, rc);
@@ -498,7 +519,7 @@ void mclass::GetPropertyEx(const FunctionCallbackInfo<Value>& args, int binary)
    cref.optype = 3;
    pcon->lock = 0;
    pcon->increment = 0;
-   rc = c->ClassReference(c, args, pcon, &cref, 0, async);
+   rc = c->ClassReference(c, args, pcon, &cref, 0, (async || pcon->net_connection));
 
    if (async) {
       DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pcon);
@@ -516,12 +537,17 @@ void mclass::GetPropertyEx(const FunctionCallbackInfo<Value>& args, int binary)
       return;
    }
 
-   rc = pcon->p_isc_so->p_CacheGetProperty();
-
-   if (rc == CACHE_SUCCESS) {
-      rc = isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+   if (pcon->net_connection) {
+      rc = dbx_getproperty(pcon);
    }
    else {
+      rc = pcon->p_isc_so->p_CacheGetProperty();
+      if (rc == CACHE_SUCCESS) {
+         rc = isc_pop_value(pcon, &(pcon->output_val), DBX_DTYPE_STR);
+      }
+   }
+
+   if (rc != CACHE_SUCCESS) {
       dbx_error_message(pcon, rc);
    }
 
@@ -575,21 +601,26 @@ void mclass::Reset(const FunctionCallbackInfo<Value>& args)
 
    pcon->lock = 0;
    pcon->increment = 0;
-   rc = c->ClassReference(c, args, pcon, NULL, 0, async);
+   rc = c->ClassReference(c, args, pcon, NULL, 0, (async || pcon->net_connection));
 
-   rc = pcon->p_isc_so->p_CacheInvokeClassMethod(pcon->cargc - 2);
-
-   if (rc == CACHE_SUCCESS) {
-      rc = isc_pop_value(pcon, &(pcon->output_val), DBX_TYPE_STR);
+   if (pcon->net_connection) {
+      rc = dbx_classmethod(pcon);
    }
    else {
+      rc = pcon->p_isc_so->p_CacheInvokeClassMethod(pcon->cargc - 2);
+      if (rc == CACHE_SUCCESS) {
+         rc = isc_pop_value(pcon, &(pcon->output_val), DBX_DTYPE_STR);
+      }
+   }
+
+   if (rc != CACHE_SUCCESS) {
       dbx_error_message(pcon, rc);
    }
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   if (pcon->output_val.type != DBX_TYPE_OREF) {
+   if (pcon->output_val.type != DBX_DTYPE_OREF) {
       str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
       args.GetReturnValue().Set(str);
       return;
