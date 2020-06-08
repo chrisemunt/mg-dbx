@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-25 May 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+8 June 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v14.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -1017,6 +1017,12 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 ### v2.0.12 (25 May 2020)
 
-* Introduce the option to connect to a database over the network 
+* Introduce the option to connect to a database over the network.
 * Remove the 32K limit on the volume of data that can be sent to the database via the **mg-dbx** methods.
 * Correct a fault that led to the failure of asynchronous calls to the **dbx::function** and **mglobal::previous** methods.
+
+### v2.0.13 (8 June 2020)
+
+* Correct a fault in the processing of InterSystems Object References (orefs).
+	* This fault only affected applications using API-based connectivity to the database (as opposed to network-based connectivity).
+	* The fault could result in Node.js throwing 'Heap Corruption' errors after creating an instance of an InterSystems Object.
