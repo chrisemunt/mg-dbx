@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "2"
 #define DBX_VERSION_MINOR        "0"
-#define DBX_VERSION_BUILD        "12"
+#define DBX_VERSION_BUILD        "13"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 

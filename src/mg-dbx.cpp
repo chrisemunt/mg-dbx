@@ -84,6 +84,9 @@ Version 2.0.12 25 May 2020:
    Remove the 32K limit on the valume of data that can be sent to the database.
    Correct a fault that led to the failure of asynchronous calls to the dbx::function and mglobal::previous methods.
 
+Version 2.0.13 8 June 2020:
+   Correct a fault in the processing of InterSystems Object References (orefs).
+
 */
 
 #include "mg-dbx.h"
@@ -2737,6 +2740,7 @@ int dbx_global_reset(const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolat
    v8::Local<v8::Object> obj;
    v8::Local<v8::String> str;
    mglobal *gx = (mglobal *) pgx;
+
    DBX_DBNAME *c = gx->c;
 
    pcon = c->pcon;
@@ -3902,14 +3906,16 @@ int isc_pop_value(DBXCON *pcon, DBXVAL *value, int required_type)
 {
    int rc, ex, ctype;
    unsigned int n, max, len;
-   char *pstr8, *p8, *outstr8;
+   char *pstr, *p, *outstr;
    CACHE_EXSTR zstr;
 
    ex = 0;
    zstr.len = 0;
    zstr.str.ch = NULL;
-   outstr8 = NULL;
+   outstr = NULL;
    ctype = CACHE_ASTRING;
+   value->type = DBX_DTYPE_STR;
+   value->num.int32 = 0;
 
    if (pcon->p_isc_so->p_CacheType) {
       ctype = pcon->p_isc_so->p_CacheType();
@@ -3917,14 +3923,15 @@ int isc_pop_value(DBXCON *pcon, DBXVAL *value, int required_type)
       if (ctype == CACHE_OREF) {
          rc = pcon->p_isc_so->p_CachePopOref(&(value->num.oref));
 
+         /* 2.0.13 correct data type and response size */
          value->type = DBX_DTYPE_OREF;
-         T_SPRINTF((char *) value->svalue.buf_addr, value->svalue.len_alloc, "%d", value->num.oref);
-         value->svalue.len_alloc = (int) strlen((char *) value->svalue.buf_addr);
+         sprintf((char *) value->svalue.buf_addr, "%d", value->num.oref);
+         value->svalue.len_used = (int) strlen((char *) value->svalue.buf_addr);
          return rc;
       }
       else if (ctype == CACHE_INT) {
-         value->type = DBX_DTYPE_INT;
          rc = pcon->p_isc_so->p_CachePopInt(&(value->num.int32));
+         value->type = DBX_DTYPE_INT;
          sprintf(value->svalue.buf_addr, "%d", value->num.int32);
          value->svalue.len_used = (int) strlen(value->svalue.buf_addr);
          return rc;
@@ -3937,10 +3944,10 @@ int isc_pop_value(DBXCON *pcon, DBXVAL *value, int required_type)
    if (ex) {
       rc = pcon->p_isc_so->p_CachePopExStr(&zstr);
       len = zstr.len;
-      outstr8 = (char *) zstr.str.ch;
+      outstr = (char *) zstr.str.ch;
    }
    else {
-      rc = pcon->p_isc_so->p_CachePopStr((int *) &len, (Callin_char_t **) &outstr8);
+      rc = pcon->p_isc_so->p_CachePopStr((int *) &len, (Callin_char_t **) &outstr);
    }
 
    if (rc != CACHE_SUCCESS) {
@@ -3953,27 +3960,29 @@ int isc_pop_value(DBXCON *pcon, DBXVAL *value, int required_type)
    }
 
    max = 0;
-   if (value->svalue.len_alloc > 8) {
+   if (value->svalue.len_alloc > 2) {
       max = (value->svalue.len_alloc - 2);
    }
 
-   pstr8 = (char *) value->svalue.buf_addr;
+   pstr = (char *) value->svalue.buf_addr;
    if (len >= max) {
-      p8 = (char *) dbx_malloc(sizeof(char) * (len + 2), 301);
-      if (p8) {
-         if (value->svalue.buf_addr)
+      p = (char *) dbx_malloc(sizeof(char) * (len + 2), 301);
+      if (p) {
+         if (value->svalue.buf_addr) {
             dbx_free((void *) value->svalue.buf_addr, 301);
-         value->svalue.buf_addr = (char *) p8;
-         pstr8 = (char *) value->svalue.buf_addr;
+         }
+         value->svalue.buf_addr = (char *) p;
+         value->svalue.len_alloc = len;
+         pstr = (char *) value->svalue.buf_addr;
          max = len;
       }
    }
    for (n = 0; n < len; n ++) {
       if (n > max)
          break;
-      pstr8[n] = (char) outstr8[n];
+      pstr[n] = (char) outstr[n];
    }
-   pstr8[n] = '\0';
+   pstr[n] = '\0';
 
    value->svalue.len_used = n;
 

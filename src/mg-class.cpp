@@ -368,6 +368,7 @@ void mclass::MethodEx(const FunctionCallbackInfo<Value>& args, int binary)
       rc = dbx_method(pcon);
    }
    else {
+
       rc = pcon->p_isc_so->p_CacheInvokeMethod(pcon->cargc - 2);
       if (rc == CACHE_SUCCESS) {
          rc = isc_pop_value(pcon, &(pcon->output_val), DBX_DTYPE_STR);
