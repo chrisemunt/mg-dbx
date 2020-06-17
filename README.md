@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-8 June 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+17 June 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v14.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -84,7 +84,7 @@ Change to your development UCI and check the installation:
        do ^%zmgsi
 
        M/Gateway Developments Ltd - Service Integration Gateway
-       Version: 3.3; Revision 8 (25 May 2020)
+       Version: 3.3; Revision 9 (17 June 2020)
 
 
 #### Installation for YottaDB
@@ -113,7 +113,7 @@ Link all the **zmgsi** routines and check the installation:
        do ^%zmgsi
 
        M/Gateway Developments Ltd - Service Integration Gateway
-       Version: 3.3; Revision 8 (25 May 2020)
+       Version: 3.3; Revision 9 (17 June 2020)
 
 Note that the version of **zmgsi** is successfully displayed.
 
@@ -1026,3 +1026,13 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Correct a fault in the processing of InterSystems Object References (orefs).
 	* This fault only affected applications using API-based connectivity to the database (as opposed to network-based connectivity).
 	* The fault could result in Node.js throwing 'Heap Corruption' errors after creating an instance of an InterSystems Object.
+
+### v2.0.14 (17 June 2020)
+
+* Extend the processing of InterSystems Object References (orefs) to cater for instances of an object embedded as a property in other objects.  For example, consider two classes Patient and Doctor where an instance of a Doctor may be embedded in a Patient record (On the Server: "Property MyDoctor As Doctor").  And on the Node.js side...
+
+        var patient = db.classmethod("User.Patient", "%OpenId", patient_id);
+        var doctor = patient.getproperty("MyDoctor");
+        var doctor_name = doctor.getproperty("Name");
+
+* Correct a fault in the processing of output values returned from YottaDB functions that led to output string values not being terminated correctly.  The result being unexpected characters appended to function outputs.
