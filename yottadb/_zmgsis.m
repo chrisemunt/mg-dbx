@@ -41,12 +41,13 @@ a0 d vers q
  ; v3.2.6:    3 February  2020 (Send version of DB back to the client)
  ; v3.2.7:    5 May       2020 (Add the 'Merge' command to the YottaDB API)
  ; v3.3.8:   25 May       2020 (Add protocol upgrade for mg-dbx - TCP based connectivity from Node.js)
+ ; v3.3.9:   17 June      2020 (Add web protocol for mg_web. Support for nested ISC Object References)
  ;
 v() ; version and date
  n v,r,d
  s v="3.3"
- s r=8
- s d="25 May 2020"
+ s r=9
+ s d="17 June 2020"
  q v_"."_r_"."_d
  ;
 vers ; version information
@@ -253,9 +254,9 @@ inetde ; error
 ifc(ctx,request,param) ; entry point from fixed binding
  n %zcs,clen,hlen,result,rlen,abyref,anybyref,argc,array,buf,byref,cmnd,dakey,darec,ddata,deod,eod,esize,extra,fun,global,hlen,maxlen,mqinfo,nato,offset,ok,oversize,pcmnd,rdxbuf,rdxptr,rdxrlen,rdxsize,ref,refn,mreq1,req,req1,req2,req3,res,size,sl,slen,sn,sysp,type,uci,var,version,x
  new $ztrap set $ztrap="zgoto "_$zlevel_":ifce^%zmgsis"
- d vars
  i param["$zv" q $zv
  i param["dbx" q $$dbx(ctx,$e(request,5),$e(request,6,9999),$$dsize256(request),param)
+ d vars
  s %zcs("ifc")=1
  s argc=1,array=0,nato=0
  k ^%zmg("mpc",$j),^mgsi($j)
@@ -1465,6 +1466,7 @@ dbx(ctx,cmnd,data,len,param) ; entry point from fixed binding
  i rc=0 s sort=1 ; data
  i rc=-1 s sort=11 ; error
  s type=1 ; string
+ s res=res
  s res=$$esize256($l(res))_$c((sort*20)+type)_res
  q res
 dbxe ; Error
@@ -1489,8 +1491,8 @@ dbxnet1 ; test
  g dbxnet1
  ;
 dbxcmnd(%r,%oref,cmnd,res) ; Execute command
+ n %io,buf,data,head,idx,len,obufsize,offset,rc,uci,data,sort,type
  new $ztrap set $ztrap="zgoto "_$zlevel_":dbxcmnde^%zmgsis"
- n buf,data,head,idx,len,obufsize,offset,rc,uci,data,sort,type
  s res=""
  i cmnd=2 s res=0 q 0
  i cmnd=3 s res=$$getuci() q 0
@@ -1549,7 +1551,7 @@ dbxglo(glo) ; Generate global name
  ;
 dbxref(%r,strt,end,ctx) ; Generate reference
  n i,ref,com
- s ref="",com="" f i=strt:1:end s ref=ref_com_"%r("_i_")",com=","
+ s ref="",com="" f i=strt:1:end s ref=ref_com_$s($g(%r(i,2))=7:"$g(%oref(%r("_i_")))",1:"%r("_i_")"),com=","
  i ctx=0,ref'="" s ref="("_ref_")"
  q ref
  ;
@@ -1567,6 +1569,28 @@ dbxmeth(%r,meth) ; Execute function
  n %oref,%uci,a,buf,cmnd,data,head,idx,len,obufsize,offset,oref,rc,res,sort,type,uci
  s @("res=$Method("_meth_")")
  q res
+ ;
+dbxweb(ctx,data,param)
+ n %r,%cgi,%var,%sys,offset,ok,sort,type,item
+ s offset=1,ok=1 f %r=1:1 s len=$$dsize256($e(data,offset,offset+3)) d  i 'ok s %r=%r-1 q
+ . s sort=$a(data,offset+4)\20,type=$a(data,offset+4)#20 i sort=9 s ok=0 q
+ . i sort=-1 s ok=0 q
+ . s item=$e(data,offset+5,offset+5+(len-1))
+ . s offset=offset+5+len
+ . i sort=5 s name=$p(item,"=",1),value=$p(item,"=",2,9999) i name'="" s %cgi(name)=value
+ . i sort=6 s %var=item
+ . i sort=7 s name=$p(item,"=",1),value=$p(item,"=",2,9999) i name'="" s %var(name)=value
+ . i sort=8 s name=$p(item,"=",1),value=$p(item,"=",2,9999) i name'="" s %sys(name)=value
+ . q
+ i $g(%sys("function"))'="" q $$dbxweb1(.%cgi,.%var,.%sys)
+ s res="HTTP/1.1 200 OK"_$c(13,10)_"Content-type: text/html"_$c(13,10)_"Connection: close"_$c(13,10)_$c(13,10)
+ s content="<html>"_$c(13,10)_"<head><title>It Works</title></head>"_$c(13,10)_"<h1>It Works!</h1>v"_$p($$v(),".",1,3)_" ("_$zd(+$h,2)_")"_$c(13,10)
+ s res=res_content
+ q res
+ ;
+dbxweb1(%cgi,%var,%sys)
+ n %r,offset,ok,x,sort,type,item,ctx,fun,len,name,value,request,data,param
+ q @("$$"_%sys("function")_"(.%cgi,.%var,.%sys)")
  ;
  ; s x=$$sqleisc^%zmgsis(0,"SELECT * FROM SQLUser.customer","")
 sqleisc(id,sql,params) ; Execute InterSystems SQL query
