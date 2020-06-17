@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "2"
 #define DBX_VERSION_MINOR        "0"
-#define DBX_VERSION_BUILD        "13"
+#define DBX_VERSION_BUILD        "14"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -57,6 +57,9 @@
 #define DBX_DBNAME_STR           "dbx"
 #define DBX_MAGIC_NUMBER         120861
 #define DBX_MAGIC_NUMBER_MGLOBAL 100863
+#define DBX_MAGIC_NUMBER_MCLASS   50474
+#define DBX_MAGIC_NUMBER_MCURSOR 200438
+#define DBX_MAGIC_NUMBER_MNET     30232
 
 #if defined(_WIN32)
 

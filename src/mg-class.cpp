@@ -55,7 +55,7 @@ void mclass::Init(Handle<Object> exports)
 
    Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
    tpl->SetClassName(String::NewFromUtf8(isolate, "mclass", NewStringType::kNormal).ToLocalChecked());
-   tpl->InstanceTemplate()->SetInternalFieldCount(1);
+   tpl->InstanceTemplate()->SetInternalFieldCount(3); /* 2.0.14 */
 #else
    Isolate* isolate = Isolate::GetCurrent();
 
@@ -158,6 +158,7 @@ void mclass::New(const FunctionCallbackInfo<Value>& args)
          }
       }
       obj->Wrap(args.This());
+      args.This()->SetInternalField(2, DBX_INTEGER_NEW(DBX_MAGIC_NUMBER_MCLASS)); /* 2.0.14 */
       args.GetReturnValue().Set(args.This());
    }
    else {
@@ -555,17 +556,31 @@ void mclass::GetPropertyEx(const FunctionCallbackInfo<Value>& args, int binary)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   if (binary) {
-      Local<Object> bx = node::Buffer::New(isolate, (char *) pcon->output_val.svalue.buf_addr, (size_t) pcon->output_val.svalue.len_used).ToLocalChecked();
-      args.GetReturnValue().Set(bx);
+   if (pcon->output_val.type != DBX_DTYPE_OREF) {
+      if (binary) {
+         Local<Object> bx = node::Buffer::New(isolate, (char *) pcon->output_val.svalue.buf_addr, (size_t) pcon->output_val.svalue.len_used).ToLocalChecked();
+         args.GetReturnValue().Set(bx);
+      }
+      else {
+         str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
+         args.GetReturnValue().Set(str);
+      }
+      return;
    }
-   else {
-      str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
-      args.GetReturnValue().Set(str);
-   }
+
+   /* 2.0.14 */
+
+   DBX_DB_LOCK(rc, 0);
+   mclass *clx1 = mclass::NewInstance(args);
+   DBX_DB_UNLOCK(rc);
+
+   clx1->c = c;
+   clx1->oref =  pcon->output_val.num.oref;
+   strcpy(clx1->class_name, "");
 
    return;
 }
+
 
 void mclass::Reset(const FunctionCallbackInfo<Value>& args)
 {

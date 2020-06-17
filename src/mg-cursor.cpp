@@ -55,7 +55,7 @@ void mcursor::Init(Handle<Object> exports)
 
    Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
    tpl->SetClassName(String::NewFromUtf8(isolate, "mcursor", NewStringType::kNormal).ToLocalChecked());
-   tpl->InstanceTemplate()->SetInternalFieldCount(1);
+   tpl->InstanceTemplate()->SetInternalFieldCount(3); /* 2.0.14 */
 #else
    Isolate* isolate = Isolate::GetCurrent();
 
@@ -134,6 +134,7 @@ void mcursor::New(const FunctionCallbackInfo<Value>& args)
          }
       }
       obj->Wrap(args.This());
+      args.This()->SetInternalField(2, DBX_INTEGER_NEW(DBX_MAGIC_NUMBER_MCURSOR)); /* 2.0.14 */
       args.GetReturnValue().Set(args.This());
    }
    else {

@@ -87,6 +87,10 @@ Version 2.0.12 25 May 2020:
 Version 2.0.13 8 June 2020:
    Correct a fault in the processing of InterSystems Object References (orefs).
 
+Version 2.0.14 17 June 2020:
+   Extend the processing of InterSystems Object References (orefs) to cater for instances of an object embedded as a property in other objects.
+   Correct a fault in the processing of output values returned from YottaDB functions that led to output string values not being terminated correctly.
+
 */
 
 #include "mg-dbx.h"
@@ -2094,11 +2098,12 @@ void DBX_DBNAME::ExtFunctionEx(const FunctionCallbackInfo<Value>& args, int bina
 
 int DBX_DBNAME::ClassReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>& args, DBXCON *pcon, DBXCREF *pcref, int argc_offset, short context)
 {
-   int n, nx, rc, otype, len;
+   int n, nx, rc, otype, fc, mn, len;
    char *p;
    char buffer[64];
    Local<Object> obj;
    Local<String> str;
+   mclass *clx;
    DBX_GET_ICONTEXT;
 
    pcon->ibuffer_used = 0;
@@ -2166,6 +2171,7 @@ int DBX_DBNAME::ClassReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>&
          pcon->args[nx].type = DBX_DTYPE_INT;
       }
       else {
+
          pcon->args[nx].type = DBX_DTYPE_STR;
          obj = dbx_is_object(args[n], &otype);
 
@@ -2175,8 +2181,26 @@ int DBX_DBNAME::ClassReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>&
             dbx_ibuffer_add(pcon, isolate, nx, str, p, (int) len, 0);
          }
          else {
-            str = DBX_TO_STRING(args[n]);
-            dbx_ibuffer_add(pcon, isolate, nx, str, NULL, 0, 0);
+            clx = NULL;
+            if (otype == 1) { /* 2.0.14 */
+               fc = obj->InternalFieldCount();
+               if (fc == 3) {
+                  mn = DBX_INT32_VALUE(obj->GetInternalField(2));
+                  if (mn == DBX_MAGIC_NUMBER_MCLASS) {
+                     clx = ObjectWrap::Unwrap<mclass>(obj);
+                     pcon->args[nx].num.oref = (int) clx->oref;
+                     T_SPRINTF(buffer, _dbxso(buffer), "%d", pcon->args[nx].num.oref);
+                     pcon->args[nx].type = DBX_DTYPE_OREF;
+                     dbx_ibuffer_add(pcon, isolate, nx, str, buffer, (int) strlen(buffer), 0);
+                     pcon->args[nx].type = DBX_DTYPE_OREF;
+
+                  }
+               }
+            }
+            if (!clx) {
+               str = DBX_TO_STRING(args[n]);
+               dbx_ibuffer_add(pcon, isolate, nx, str, NULL, 0, 0);
+            }
          }
       }
       if (context == 0) {
@@ -2659,7 +2683,7 @@ int dbx_write_char8(v8::Isolate * isolate, v8::Local<v8::String> str, char * buf
 
 int dbx_ibuffer_add(DBXCON *pcon, v8::Isolate * isolate, int argn, v8::Local<v8::String> str, char * buffer, int buffer_len, short context)
 {
-   int len;
+   int len, type;
    unsigned char *p, *phead;
 
    if (buffer)
@@ -2693,10 +2717,11 @@ int dbx_ibuffer_add(DBXCON *pcon, v8::Isolate * isolate, int argn, v8::Local<v8:
       dbx_write_char8(isolate, str, (char *) p, pcon->utf8);
    }
    pcon->ibuffer_used += len;
+   type = pcon->args[argn].type; /* v2.0.14 */
    pcon->args[argn].type = DBX_DTYPE_STR; /* Bug fix v1.3.7 */
 
    if (context == 2 || pcon->net_connection) { /* v1.4.10 */
-      dbx_add_block_size(phead, 0, len, pcon->args[argn].sort, DBX_DTYPE_STR8);
+      dbx_add_block_size(phead, 0, len, pcon->args[argn].sort, type);
    }
 
    pcon->args[argn].svalue.buf_addr = (char *) p;
@@ -4776,10 +4801,17 @@ int ydb_function(DBXCON *pcon, DBXFUN *pfun)
          break;
       default:
          rc = CACHE_SUCCESS;
+         out.length = 0;
          break;
    }
 
-   pcon->output_val.svalue.len_used = (int) strlen(pcon->output_val.svalue.buf_addr);
+   /* v2.0.14 */
+   if (rc == CACHE_SUCCESS) {
+      pcon->output_val.svalue.len_used = (int) out.length;
+   }
+   else {
+      pcon->output_val.svalue.len_used = 0;
+   }
 
    return rc;
 }
@@ -5047,6 +5079,9 @@ int dbx_reference(DBXCON *pcon, int n)
    else if (pcon->args[n].type == DBX_DTYPE_DOUBLE) {
       rc = pcon->p_isc_so->p_CachePushDbl(pcon->args[n].num.real);
       /* rc = pcon->p_isc_so->p_CachePushIEEEDbl(pcon->args[n].num.real); */
+   }
+   else if (pcon->args[n].type == DBX_DTYPE_OREF) { /* 2.0.14 */
+      rc = pcon->p_isc_so->p_CachePushOref(pcon->args[n].num.oref);
    }
    else {
       if (pcon->args[n].svalue.len_used < CACHE_MAXSTRLEN) {
