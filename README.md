@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-17 June 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+22 June 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v14.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -1029,10 +1029,15 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 ### v2.0.14 (17 June 2020)
 
-* Extend the processing of InterSystems Object References (orefs) to cater for instances of an object embedded as a property in other objects.  For example, consider two classes Patient and Doctor where an instance of a Doctor may be embedded in a Patient record (On the Server: "Property MyDoctor As Doctor").  And on the Node.js side...
+* Extend the processing of InterSystems Object References (orefs) to cater for instances of an object embedded as a property in other objects.  For example, consider two classes: Patient and Doctor where an instance of a Doctor may be embedded in a Patient record (On the Server: "Property MyDoctor As Doctor").  And on the Node.js side...
 
         var patient = db.classmethod("User.Patient", "%OpenId", patient_id);
         var doctor = patient.getproperty("MyDoctor");
         var doctor_name = doctor.getproperty("Name");
 
 * Correct a fault in the processing of output values returned from YottaDB functions that led to output string values not being terminated correctly.  The result being unexpected characters appended to function outputs.
+
+### v2.0.15 (22 June 2020)
+
+* Correct a fault that could lead to fatal error conditions when creating new JS objects in multithreaded Node.js applications (i.e. when using Node.js/V8 worker threads).
+
