@@ -91,6 +91,9 @@ Version 2.0.14 17 June 2020:
    Extend the processing of InterSystems Object References (orefs) to cater for instances of an object embedded as a property in other objects.
    Correct a fault in the processing of output values returned from YottaDB functions that led to output string values not being terminated correctly.
 
+Version 2.0.15 22 June 2020:
+   Correct a fault that could lead to fatal error conditions when creating new JS objects in multithreaded Node.js applications (Node.js/V8 worker threads).
+
 */
 
 #include "mg-dbx.h"

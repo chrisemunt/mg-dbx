@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "2"
 #define DBX_VERSION_MINOR        "0"
-#define DBX_VERSION_BUILD        "14"
+#define DBX_VERSION_BUILD        "15"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -299,6 +299,10 @@ DISABLE_WCAST_FUNCTION_TYPE
 
 #if DBX_NODE_VERSION >= 100000
 
+/* v2.0.15 */
+
+#if 0
+
 #define DBX_GET_ISOLATE \
    if (c->isolate == NULL) { \
       c->isolate = args.GetIsolate(); \
@@ -317,6 +321,41 @@ DISABLE_WCAST_FUNCTION_TYPE
    } \
    Isolate* isolate = c->isolate; \
    Local<Context> icontext = c->icontext; \
+
+#elif 1
+
+#define DBX_GET_ISOLATE \
+   if (c->isolate == NULL) { \
+      c->isolate = args.GetIsolate(); \
+      HandleScope scope(c->isolate); \
+   } \
+   Isolate* isolate = c->isolate; \
+
+#define DBX_GET_ICONTEXT \
+   if (c->isolate == NULL) { \
+      c->isolate = args.GetIsolate(); \
+      HandleScope scope(c->isolate); \
+   } \
+   Isolate* isolate = c->isolate; \
+   Local<Context> icontext = isolate->GetCurrentContext(); \
+   c->icontext = icontext;\
+   c->got_icontext = 1; \
+
+#else
+
+#define DBX_GET_ISOLATE \
+   c->isolate = args.GetIsolate(); \
+   HandleScope scope(c->isolate); \
+   Isolate* isolate = c->isolate; \
+
+#define DBX_GET_ICONTEXT \
+   c->isolate = args.GetIsolate(); \
+   HandleScope scope(c->isolate); \
+   c->icontext = c->isolate->GetCurrentContext(); \
+   Isolate* isolate = c->isolate; \
+   Local<Context> icontext = c->icontext; \
+
+#endif
 
 #else
 
