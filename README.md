@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-22 June 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+8 July 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v14.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -1040,4 +1040,8 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v2.0.15 (22 June 2020)
 
 * Correct a fault that could lead to fatal error conditions when creating new JS objects in multithreaded Node.js applications (i.e. when using Node.js/V8 worker threads).
+
+### v2.0.16 (8 July 2020)
+
+* Correct a fault that could lead to **mg-dbx** incorrectly reporting _'Database not open'_ errors when connecting to YottaDB via its API in multithreaded Node.js applications.
 
