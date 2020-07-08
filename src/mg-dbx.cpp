@@ -94,6 +94,9 @@ Version 2.0.14 17 June 2020:
 Version 2.0.15 22 June 2020:
    Correct a fault that could lead to fatal error conditions when creating new JS objects in multithreaded Node.js applications (Node.js/V8 worker threads).
 
+Version 2.0.16 8 July 2020:
+   Correct a fault that could lead to mg-dbx incorrectly reporting 'Database not open' errors when connecting to YottaDB via its API in multithreaded Node.js applications.
+
 */
 
 #include "mg-dbx.h"
@@ -131,8 +134,8 @@ struct dbx_pool_task * bottom_task     = NULL;
 
 DBXCON * pcon_api = NULL;
 
-DBXISCSO *  p_isc_so_global;
-DBXYDBSO *  p_ydb_so_global;
+DBXISCSO *  p_isc_so_global = NULL;
+DBXYDBSO *  p_ydb_so_global = NULL;
 DBXMUTEX    mutex_global;
 
 using namespace node;
@@ -2518,7 +2521,6 @@ static void init (Handle<Object> exports)
 #endif
 #endif
 {
-
    DBX_DBNAME::Init(exports);
    mglobal::Init(exports);
    mcursor::Init(exports);
@@ -3670,7 +3672,7 @@ isc_authenticate_reopen:
 
 	rc = pcon->p_isc_so->p_CacheSecureStartA(&pusername, &ppassword, &pexename, termflag, timeout, ppin, ppout);
 
-	if (rc != CACHE_SUCCESS) {
+	if (rc != CACHE_SUCCESS && rc != CACHE_ALREADYCON) { /* v2.0.16 */
       pcon->error_code = rc;
 	   if (rc == CACHE_ACCESSDENIED) {
 	      T_SPRINTF(pcon->error, _dbxso(pcon->error), "Authentication: Access Denied : Check the audit log for the real authentication error (%d)\n", rc);
@@ -3701,6 +3703,7 @@ isc_authenticate_reopen:
 	   return 0;
    }
 
+   rc =  CACHE_SUCCESS; /* v2.0.16 */
 
    {
       CACHE_ASTR retval;
@@ -4956,14 +4959,19 @@ int dbx_close(DBXCON *pcon)
    }
    dbx_leave_critical_section((void *) &dbx_async_mutex);
 
+   /* printf("\r\ndbx_close: no_connections=%d\r\n", no_connections); */
+
    if (pcon->net_connection) {
       netx_tcp_disconnect(pcon, 0);
       pcon->net_connection = 0;
    }
    else if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
-      if (pcon->p_ydb_so && no_connections == 0) {
+
+      /* printf("\r\ndbx_close: no_connections=%d; pcon->p_ydb_so->multiple_connections=%d;\r\n", no_connections, pcon->p_ydb_so->multiple_connections); */
+
+      if (pcon->p_ydb_so && no_connections == 0 && pcon->p_ydb_so->multiple_connections == 0) {
          if (pcon->p_ydb_so->loaded) {
-            pcon->p_ydb_so->p_ydb_exit();
+            /* pcon->p_ydb_so->p_ydb_exit(); */
 /*
             printf("\r\np_ydb_exit=%d\r\n", rc);
             dbx_dso_unload(pcon->p_ydb_so->p_library); 
@@ -4980,7 +4988,10 @@ int dbx_close(DBXCON *pcon)
       }
    }
    else {
-      if (pcon->p_isc_so && no_connections == 0 && pcon->p_isc_so->multiple_connections == 0) {
+
+      /* printf("\r\ndbx_close: no_connections=%d; pcon->p_isc_so->multiple_connections=%d;\r\n", no_connections, pcon->p_isc_so->multiple_connections ); */
+
+      if (pcon->p_isc_so && no_connections == 0 && pcon->p_isc_so->multiple_connections == 0) { /* v2.0.16 */
 
          if (pcon->p_isc_so->loaded) {
 
