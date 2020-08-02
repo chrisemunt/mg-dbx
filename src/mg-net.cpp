@@ -694,48 +694,49 @@ int netx_tcp_handshake(DBXCON *pcon, int context)
    return 0;
 }
 
-int netx_tcp_command(DBXCON *pcon, int command, int context)
+int netx_tcp_command(DBXMETH *pmeth, int command, int context)
 {
    int len, rc;
    unsigned int netbuf_used;
    unsigned char *netbuf;
+   DBXCON *pcon = pmeth->pcon;
 
    rc = CACHE_SUCCESS;
    pcon->error[0] = '\0';
 
-   dbx_add_block_size(pcon->ibuffer, pcon->ibuffer_used, 0,  DBX_DSORT_EOD, DBX_DTYPE_STR8);
-   pcon->ibuffer_used += 5;
+   dbx_add_block_size(pmeth->ibuffer, pmeth->ibuffer_used, 0,  DBX_DSORT_EOD, DBX_DTYPE_STR8);
+   pmeth->ibuffer_used += 5;
 
-   netbuf = (pcon->ibuffer - DBX_IBUFFER_OFFSET);
-   netbuf_used = (pcon->ibuffer_used + DBX_IBUFFER_OFFSET);
+   netbuf = (pmeth->ibuffer - DBX_IBUFFER_OFFSET);
+   netbuf_used = (pmeth->ibuffer_used + DBX_IBUFFER_OFFSET);
    dbx_add_block_size(netbuf, 0, netbuf_used,  0, command);
 /*
    {
       char buffer[256];
-      sprintf(buffer, "netx_tcp_command SEND cmnd=%d; size=%d; netbuf_used=%d;", command, pcon->ibuffer_used, netbuf_used);
+      sprintf(buffer, "netx_tcp_command SEND cmnd=%d; size=%d; netbuf_used=%d;", command, pmeth->ibuffer_used, netbuf_used);
       dbx_buffer_dump(pcon, netbuf, netbuf_used, buffer, 8, 0);
    }
 */
    netx_tcp_write(pcon, (unsigned char *) netbuf, netbuf_used);
-   netx_tcp_read(pcon, (unsigned char *) pcon->output_val.svalue.buf_addr, 5, 10, 0);
-   pcon->output_val.svalue.buf_addr[5] = '\0';
+   netx_tcp_read(pcon, (unsigned char *) pmeth->output_val.svalue.buf_addr, 5, 10, 0);
+   pmeth->output_val.svalue.buf_addr[5] = '\0';
 
-   len = dbx_get_block_size((unsigned char *) pcon->output_val.svalue.buf_addr, 0, &(pcon->output_val.sort), &(pcon->output_val.type));
+   len = dbx_get_block_size((unsigned char *) pmeth->output_val.svalue.buf_addr, 0, &(pmeth->output_val.sort), &(pmeth->output_val.type));
 
    if (len > 0) {
-      netx_tcp_read(pcon, (unsigned char *) pcon->output_val.svalue.buf_addr, len, 10, 0);
+      netx_tcp_read(pcon, (unsigned char *) pmeth->output_val.svalue.buf_addr, len, 10, 0);
    }
 
-   if (pcon->output_val.type == DBX_DTYPE_OREF) {
-      pcon->output_val.svalue.buf_addr[len] = '\0';
-      pcon->output_val.num.oref = (int) strtol(pcon->output_val.svalue.buf_addr, NULL, 10);
-      pcon->output_val.num.int32 = pcon->output_val.num.oref;
+   if (pmeth->output_val.type == DBX_DTYPE_OREF) {
+      pmeth->output_val.svalue.buf_addr[len] = '\0';
+      pmeth->output_val.num.oref = (int) strtol(pmeth->output_val.svalue.buf_addr, NULL, 10);
+      pmeth->output_val.num.int32 = pmeth->output_val.num.oref;
    }
 
-   if (pcon->output_val.sort == DBX_DSORT_ERROR) {
+   if (pmeth->output_val.sort == DBX_DSORT_ERROR) {
       rc = CACHE_FAILURE;
       if (len > 0) {
-         strncpy(pcon->error, pcon->output_val.svalue.buf_addr, len);
+         strncpy(pcon->error, pmeth->output_val.svalue.buf_addr, len);
          pcon->error[len] = '\0';
          len = 0;
       }
@@ -743,11 +744,11 @@ int netx_tcp_command(DBXCON *pcon, int command, int context)
 /*
    {
       char buffer[256];
-      sprintf(buffer, "netx_tcp_command RECV cmnd=%d; len=%d; sort=%d; type=%d; oref=%d; rc=%d; error=%s;", command, len, pcon->output_val.sort, pcon->output_val.type, pcon->output_val.num.oref, rc, pcon->error);
-      dbx_buffer_dump(pcon, pcon->output_val.svalue.buf_addr, len, buffer, 8, 0);
+      sprintf(buffer, "netx_tcp_command RECV cmnd=%d; len=%d; sort=%d; type=%d; oref=%d; rc=%d; error=%s;", command, len, pmeth->output_val.sort, pmeth->output_val.type, pmeth->output_val.num.oref, rc, pcon->error);
+      dbx_buffer_dump(pcon, pmeth->output_val.svalue.buf_addr, len, buffer, 8, 0);
    }
 */
-   pcon->output_val.svalue.len_used = len;
+   pmeth->output_val.svalue.len_used = len;
 
    return rc;
 }

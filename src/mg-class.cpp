@@ -97,6 +97,7 @@ void mclass::New(const FunctionCallbackInfo<Value>& args)
    int rc, fc, mn, argc, otype;
    DBX_DBNAME *c = NULL;
    DBXCON *pcon = NULL;
+   DBXMETH *pmeth = NULL;
    Local<Object> obj;
 
    /* 1.4.10 */
@@ -125,37 +126,36 @@ void mclass::New(const FunctionCallbackInfo<Value>& args)
             isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "No Connection to the database", 1)));
             return;
          }
-         c->pcon->argc = argc;
          obj->c = c;
          pcon = c->pcon;
-         pcon->argc = argc;
+         pmeth = dbx_request_memory(pcon, 1);
+         pmeth->argc = argc;
          if (argc > 1) {
             dbx_write_char8(isolate, DBX_TO_STRING(args[1]), obj->class_name, obj->c->pcon->utf8);
             if (argc > 2) {
-               DBX_DBFUN_START(c, c->pcon);
-               c->pcon->ibuffer_used = 0;
-               c->pcon->lock = 0;
-               c->pcon->increment = 0;
-               rc = c->ClassReference(c, args, c->pcon, NULL, 1, pcon->net_connection);
+               DBX_DBFUN_START(c, c->pcon, pmeth);
+               pmeth->ibuffer_used = 0;
+               rc = c->ClassReference(c, args, pmeth, NULL, 1, pcon->net_connection);
                if (c->pcon->net_connection) {
-                  rc = dbx_classmethod(pcon);
+                  rc = dbx_classmethod(pmeth);
                }
                else {
-                  rc = pcon->p_isc_so->p_CacheInvokeClassMethod(pcon->cargc - 2);
+                  rc = pcon->p_isc_so->p_CacheInvokeClassMethod(pmeth->cargc - 2);
                   if (rc == CACHE_SUCCESS) {
-                     rc = isc_pop_value(pcon, &(pcon->output_val), DBX_DTYPE_STR);
+                     rc = isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
                   }
                }
                if (rc != CACHE_SUCCESS) {
-                  dbx_error_message(pcon, rc);
+                  dbx_error_message(pmeth, rc);
                }
                DBX_DBFUN_END(c);
                DBX_DB_UNLOCK(rc);
-               if (pcon->output_val.type == DBX_DTYPE_OREF) {
-                  obj->oref =  pcon->output_val.num.oref;
+               if (pmeth->output_val.type == DBX_DTYPE_OREF) {
+                  obj->oref =  pmeth->output_val.num.oref;
                }
             }
          }
+         dbx_request_memory_free(pcon, pmeth, 0);
       }
       obj->Wrap(args.This());
       args.This()->SetInternalField(2, DBX_INTEGER_NEW(DBX_MAGIC_NUMBER_MCLASS)); /* 2.0.14 */
@@ -198,6 +198,13 @@ mclass * mclass::NewInstance(const FunctionCallbackInfo<Value>& args)
 }
 
 
+int mclass::async_callback(mclass *clx)
+{
+   clx->Unref();
+   return 0;
+}
+
+
 int mclass::delete_mclass_template(mclass *clx)
 {
    return 0;
@@ -221,6 +228,7 @@ void mclass::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int binary)
    short async;
    int rc;
    DBXCON *pcon;
+   DBXMETH *pmeth;
    Local<String> str;
    DBXCREF cref;
    mclass *clx = ObjectWrap::Unwrap<mclass>(args.This());
@@ -230,66 +238,78 @@ void mclass::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int binary)
    clx->dbx_count ++;
 
    pcon = c->pcon;
-   pcon->binary = binary;
+   if (pcon->log_functions) {
+      c->LogFunction(c, args, (void *) clx, (char *) "mclass::classmethod");
+   }
+   pmeth = dbx_request_memory(pcon, 0);
+
+   pmeth->binary = binary;
    cref.class_name = clx->class_name;
    cref.oref = clx->oref;
 
-   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
 
-   if (pcon->argc >= DBX_MAXARGS) {
+   if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on ClassMethod", 1)));
+      dbx_request_memory_free(pcon, pmeth, 0);
       return;
    }
    
-   DBX_DBFUN_START(c, pcon);
+   DBX_DBFUN_START(c, pcon, pmeth);
 
    cref.optype = 0;
-   pcon->lock = 0;
-   pcon->increment = 0;
-   rc = c->ClassReference(c, args, pcon, &cref, 0, (async || pcon->net_connection));
+   rc = c->ClassReference(c, args, pmeth, &cref, 0, (async || pcon->net_connection));
+
+   if (pcon->log_transmissions) {
+      dbx_log_transmission(pcon, pmeth, (char *) "mclass::classmethod");
+   }
 
    if (async) {
-      DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pcon);
-      baton->pcon->p_dbxfun = (int (*) (struct tagDBXCON * pcon)) dbx_classmethod;
-      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+      DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pmeth);
+      baton->clx = (void *) clx;
+      baton->isolate = isolate;
+      baton->pmeth->p_dbxfun = (int (*) (struct tagDBXMETH * pmeth)) dbx_classmethod;
+      Local<Function> cb = Local<Function>::Cast(args[pmeth->argc]);
       baton->cb.Reset(isolate, cb);
       clx->Ref();
       if (c->dbx_queue_task((void *) c->dbx_process_task, (void *) c->dbx_invoke_callback, baton, 0)) {
          char error[DBX_ERROR_SIZE];
          T_STRCPY(error, _dbxso(error), pcon->error);
-         c->dbx_destroy_baton(baton, pcon);
+         c->dbx_destroy_baton(baton, pmeth);
          isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
+         dbx_request_memory_free(pcon, pmeth, 0);
          return;
       }
       return;
    }
 
    if (pcon->net_connection) {
-      rc = dbx_classmethod(pcon);
+      rc = dbx_classmethod(pmeth);
    }
    else {
-      rc = pcon->p_isc_so->p_CacheInvokeClassMethod(pcon->cargc - 2);
+      rc = pcon->p_isc_so->p_CacheInvokeClassMethod(pmeth->cargc - 2);
       if (rc == CACHE_SUCCESS) {
-         rc = isc_pop_value(pcon, &(pcon->output_val), DBX_DTYPE_STR);
+         rc = isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
       }
    }
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pcon, rc);
+      dbx_error_message(pmeth, rc);
    }
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   if (pcon->output_val.type != DBX_DTYPE_OREF) {
+   if (pmeth->output_val.type != DBX_DTYPE_OREF) {
       if (binary) {
-         Local<Object> bx = node::Buffer::New(isolate, (char *) pcon->output_val.svalue.buf_addr, (size_t) pcon->output_val.svalue.len_used).ToLocalChecked();
+         Local<Object> bx = node::Buffer::New(isolate, (char *) pmeth->output_val.svalue.buf_addr, (size_t) pmeth->output_val.svalue.len_used).ToLocalChecked();
          args.GetReturnValue().Set(bx);
       }
       else {
-         str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
+         str = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
          args.GetReturnValue().Set(str);
       }
+      dbx_request_memory_free(pcon, pmeth, 0);
       return;
    }
 
@@ -298,9 +318,9 @@ void mclass::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int binary)
    DBX_DB_UNLOCK(rc);
 
    clx1->c = c;
-   clx1->oref =  pcon->output_val.num.oref;
+   clx1->oref =  pmeth->output_val.num.oref;
    strcpy(clx1->class_name, "");
-
+   dbx_request_memory_free(pcon, pmeth, 0);
    return;
 }
 
@@ -322,6 +342,7 @@ void mclass::MethodEx(const FunctionCallbackInfo<Value>& args, int binary)
    short async;
    int rc;
    DBXCON *pcon;
+   DBXMETH *pmeth;
    Local<String> str;
    DBXCREF cref;
    mclass *clx = ObjectWrap::Unwrap<mclass>(args.This());
@@ -331,67 +352,79 @@ void mclass::MethodEx(const FunctionCallbackInfo<Value>& args, int binary)
    clx->dbx_count ++;
 
    pcon = c->pcon;
-   pcon->binary = binary;
+   if (pcon->log_functions) {
+      c->LogFunction(c, args, (void *) clx, (char *) "mclass::method");
+   }
+   pmeth = dbx_request_memory(pcon, 0);
+
+   pmeth->binary = binary;
    cref.class_name = clx->class_name;
    cref.oref = clx->oref;
 
-   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
 
-   if (pcon->argc >= DBX_MAXARGS) {
+   if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on ClassMethod", 1)));
+      dbx_request_memory_free(pcon, pmeth, 0);
       return;
    }
    
-   DBX_DBFUN_START(c, pcon);
+   DBX_DBFUN_START(c, pcon, pmeth);
 
    cref.optype = 1;
-   pcon->lock = 0;
-   pcon->increment = 0;
-   rc = c->ClassReference(c, args, pcon, &cref, 0, (async || pcon->net_connection));
+   rc = c->ClassReference(c, args, pmeth, &cref, 0, (async || pcon->net_connection));
+
+   if (pcon->log_transmissions) {
+      dbx_log_transmission(pcon, pmeth, (char *) "mclass::method");
+   }
 
    if (async) {
-      DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pcon);
-      baton->pcon->p_dbxfun = (int (*) (struct tagDBXCON * pcon)) dbx_method;
-      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+      DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pmeth);
+      baton->clx = (void *) clx;
+      baton->isolate = isolate;
+      baton->pmeth->p_dbxfun = (int (*) (struct tagDBXMETH * pmeth)) dbx_method;
+      Local<Function> cb = Local<Function>::Cast(args[pmeth->argc]);
       baton->cb.Reset(isolate, cb);
       clx->Ref();
       if (c->dbx_queue_task((void *) c->dbx_process_task, (void *) c->dbx_invoke_callback, baton, 0)) {
          char error[DBX_ERROR_SIZE];
          T_STRCPY(error, _dbxso(error), pcon->error);
-         c->dbx_destroy_baton(baton, pcon);
+         c->dbx_destroy_baton(baton, pmeth);
          isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
+         dbx_request_memory_free(pcon, pmeth, 0);
          return;
       }
       return;
    }
 
    if (pcon->net_connection) {
-      rc = dbx_method(pcon);
+      rc = dbx_method(pmeth);
    }
    else {
 
-      rc = pcon->p_isc_so->p_CacheInvokeMethod(pcon->cargc - 2);
+      rc = pcon->p_isc_so->p_CacheInvokeMethod(pmeth->cargc - 2);
       if (rc == CACHE_SUCCESS) {
-         rc = isc_pop_value(pcon, &(pcon->output_val), DBX_DTYPE_STR);
+         rc = isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
       }
    }
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pcon, rc);
+      dbx_error_message(pmeth, rc);
    }
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   if (pcon->output_val.type != DBX_DTYPE_OREF) {
+   if (pmeth->output_val.type != DBX_DTYPE_OREF) {
       if (binary) {
-         Local<Object> bx = node::Buffer::New(isolate, (char *) pcon->output_val.svalue.buf_addr, (size_t) pcon->output_val.svalue.len_used).ToLocalChecked();
+         Local<Object> bx = node::Buffer::New(isolate, (char *) pmeth->output_val.svalue.buf_addr, (size_t) pmeth->output_val.svalue.len_used).ToLocalChecked();
          args.GetReturnValue().Set(bx);
       }
       else {
-         str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
+         str = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
          args.GetReturnValue().Set(str);
       }
+      dbx_request_memory_free(pcon, pmeth, 0);
       return;
    }
 
@@ -400,9 +433,9 @@ void mclass::MethodEx(const FunctionCallbackInfo<Value>& args, int binary)
    DBX_DB_UNLOCK(rc);
 
    clx1->c = c;
-   clx1->oref =  pcon->output_val.num.oref;
+   clx1->oref =  pmeth->output_val.num.oref;
    strcpy(clx1->class_name, "");
-
+   dbx_request_memory_free(pcon, pmeth, 0);
    return;
 }
 
@@ -412,6 +445,7 @@ void mclass::SetProperty(const FunctionCallbackInfo<Value>& args)
    short async;
    int rc;
    DBXCON *pcon;
+   DBXMETH *pmeth;
    Local<String> str;
    DBXCREF cref;
    mclass *clx = ObjectWrap::Unwrap<mclass>(args.This());
@@ -421,60 +455,70 @@ void mclass::SetProperty(const FunctionCallbackInfo<Value>& args)
    clx->dbx_count ++;
 
    pcon = c->pcon;
-   pcon->binary = 0;
+   if (pcon->log_functions) {
+      c->LogFunction(c, args, (void *) clx, (char *) "mclass::setproperty");
+   }
+   pmeth = dbx_request_memory(pcon, 0);
+
    cref.class_name = clx->class_name;
    cref.oref = clx->oref;
 
-   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
 
-   if (pcon->argc >= DBX_MAXARGS) {
+   if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on ClassMethod", 1)));
+      dbx_request_memory_free(pcon, pmeth, 0);
       return;
    }
    
-   DBX_DBFUN_START(c, pcon);
+   DBX_DBFUN_START(c, pcon, pmeth);
 
    cref.optype = 2;
-   pcon->lock = 0;
-   pcon->increment = 0;
-   rc = c->ClassReference(c, args, pcon, &cref, 0, (async || pcon->net_connection));
+   rc = c->ClassReference(c, args, pmeth, &cref, 0, (async || pcon->net_connection));
+
+   if (pcon->log_transmissions) {
+      dbx_log_transmission(pcon, pmeth, (char *) "mclass::setproperty");
+   }
 
    if (async) {
-      DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pcon);
-      baton->pcon->p_dbxfun = (int (*) (struct tagDBXCON * pcon)) dbx_setproperty;
-      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+      DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pmeth);
+      baton->clx = (void *) clx;
+      baton->isolate = isolate;
+      baton->pmeth->p_dbxfun = (int (*) (struct tagDBXMETH * pmeth)) dbx_setproperty;
+      Local<Function> cb = Local<Function>::Cast(args[pmeth->argc]);
       baton->cb.Reset(isolate, cb);
       clx->Ref();
       if (c->dbx_queue_task((void *) c->dbx_process_task, (void *) c->dbx_invoke_callback, baton, 0)) {
          char error[DBX_ERROR_SIZE];
          T_STRCPY(error, _dbxso(error), pcon->error);
-         c->dbx_destroy_baton(baton, pcon);
+         c->dbx_destroy_baton(baton, pmeth);
          isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
+         dbx_request_memory_free(pcon, pmeth, 0);
          return;
       }
       return;
    }
 
    if (pcon->net_connection) {
-      rc = dbx_setproperty(pcon);
+      rc = dbx_setproperty(pmeth);
    }
    else {
       rc = pcon->p_isc_so->p_CacheSetProperty();
    }
 
    if (rc == CACHE_SUCCESS) {
-      dbx_create_string(&(pcon->output_val.svalue), (void *) &rc, DBX_DTYPE_INT);
+      dbx_create_string(&(pmeth->output_val.svalue), (void *) &rc, DBX_DTYPE_INT);
    }
    else {
-      dbx_error_message(pcon, rc);
+      dbx_error_message(pmeth, rc);
    }
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
+   str = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(str);
-
+   dbx_request_memory_free(pcon, pmeth, 0);
    return;
 }
 
@@ -496,6 +540,7 @@ void mclass::GetPropertyEx(const FunctionCallbackInfo<Value>& args, int binary)
    short async;
    int rc;
    DBXCON *pcon;
+   DBXMETH *pmeth;
    Local<String> str;
    DBXCREF cref;
    mclass *clx = ObjectWrap::Unwrap<mclass>(args.This());
@@ -505,66 +550,78 @@ void mclass::GetPropertyEx(const FunctionCallbackInfo<Value>& args, int binary)
    clx->dbx_count ++;
 
    pcon = c->pcon;
-   pcon->binary = binary;
+   if (pcon->log_functions) {
+      c->LogFunction(c, args, (void *) clx, (char *) "mclass::getproperty");
+   }
+   pmeth = dbx_request_memory(pcon, 0);
+
+   pmeth->binary = binary;
    cref.class_name = clx->class_name;
    cref.oref = clx->oref;
 
-   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
 
-   if (pcon->argc >= DBX_MAXARGS) {
+   if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on ClassMethod", 1)));
+      dbx_request_memory_free(pcon, pmeth, 0);
       return;
    }
    
-   DBX_DBFUN_START(c, pcon);
+   DBX_DBFUN_START(c, pcon, pmeth);
 
    cref.optype = 3;
-   pcon->lock = 0;
-   pcon->increment = 0;
-   rc = c->ClassReference(c, args, pcon, &cref, 0, (async || pcon->net_connection));
+   rc = c->ClassReference(c, args, pmeth, &cref, 0, (async || pcon->net_connection));
+
+   if (pcon->log_transmissions) {
+      dbx_log_transmission(pcon, pmeth, (char *) "mclass::getproperty");
+   }
 
    if (async) {
-      DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pcon);
-      baton->pcon->p_dbxfun = (int (*) (struct tagDBXCON * pcon)) dbx_getproperty;
-      Local<Function> cb = Local<Function>::Cast(args[pcon->argc]);
+      DBX_DBNAME::dbx_baton_t *baton = c->dbx_make_baton(c, pmeth);
+      baton->clx = (void *) clx;
+      baton->isolate = isolate;
+      baton->pmeth->p_dbxfun = (int (*) (struct tagDBXMETH * pmeth)) dbx_getproperty;
+      Local<Function> cb = Local<Function>::Cast(args[pmeth->argc]);
       baton->cb.Reset(isolate, cb);
       clx->Ref();
       if (c->dbx_queue_task((void *) c->dbx_process_task, (void *) c->dbx_invoke_callback, baton, 0)) {
          char error[DBX_ERROR_SIZE];
          T_STRCPY(error, _dbxso(error), pcon->error);
-         c->dbx_destroy_baton(baton, pcon);
+         c->dbx_destroy_baton(baton, pmeth);
          isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, error, 1)));
+         dbx_request_memory_free(pcon, pmeth, 0);
          return;
       }
       return;
    }
 
    if (pcon->net_connection) {
-      rc = dbx_getproperty(pcon);
+      rc = dbx_getproperty(pmeth);
    }
    else {
       rc = pcon->p_isc_so->p_CacheGetProperty();
       if (rc == CACHE_SUCCESS) {
-         rc = isc_pop_value(pcon, &(pcon->output_val), DBX_DTYPE_STR);
+         rc = isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
       }
    }
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pcon, rc);
+      dbx_error_message(pmeth, rc);
    }
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   if (pcon->output_val.type != DBX_DTYPE_OREF) {
+   if (pmeth->output_val.type != DBX_DTYPE_OREF) {
       if (binary) {
-         Local<Object> bx = node::Buffer::New(isolate, (char *) pcon->output_val.svalue.buf_addr, (size_t) pcon->output_val.svalue.len_used).ToLocalChecked();
+         Local<Object> bx = node::Buffer::New(isolate, (char *) pmeth->output_val.svalue.buf_addr, (size_t) pmeth->output_val.svalue.len_used).ToLocalChecked();
          args.GetReturnValue().Set(bx);
       }
       else {
-         str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
+         str = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
          args.GetReturnValue().Set(str);
       }
+      dbx_request_memory_free(pcon, pmeth, 0);
       return;
    }
 
@@ -575,9 +632,9 @@ void mclass::GetPropertyEx(const FunctionCallbackInfo<Value>& args, int binary)
    DBX_DB_UNLOCK(rc);
 
    clx1->c = c;
-   clx1->oref =  pcon->output_val.num.oref;
+   clx1->oref =  pmeth->output_val.num.oref;
    strcpy(clx1->class_name, "");
-
+   dbx_request_memory_free(pcon, pmeth, 0);
    return;
 }
 
@@ -588,6 +645,7 @@ void mclass::Reset(const FunctionCallbackInfo<Value>& args)
    int rc;
    char class_name[256];
    DBXCON *pcon;
+   DBXMETH *pmeth;
    Local<Object> obj;
    Local<String> str;
    mclass *clx = ObjectWrap::Unwrap<mclass>(args.This());
@@ -597,54 +655,60 @@ void mclass::Reset(const FunctionCallbackInfo<Value>& args)
    clx->dbx_count ++;
 
    pcon = c->pcon;
-   pcon->binary = 0;
-   DBX_CALLBACK_FUN(pcon->argc, cb, async);
+   if (pcon->log_functions) {
+      c->LogFunction(c, args, (void *) clx, (char *) "mclass::reset");
+   }
+   pmeth = dbx_request_memory(pcon, 0);
 
-   pcon->argc = args.Length();
+   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
 
-   if (pcon->argc < 1) {
+   pmeth->argc = args.Length();
+
+   if (pmeth->argc < 1) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The class:reset method takes at least one argument (the class name)", 1)));
+      dbx_request_memory_free(pcon, pmeth, 0);
       return;
    }
 
    dbx_write_char8(isolate, DBX_TO_STRING(args[0]), class_name, pcon->utf8);
    if (class_name[0] == '\0') {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The class:reset method takes at least one argument (the class name)", 1)));
+      dbx_request_memory_free(pcon, pmeth, 0);
       return;
    }
 
-   DBX_DBFUN_START(c, pcon);
+   DBX_DBFUN_START(c, pcon, pmeth);
 
-   pcon->lock = 0;
-   pcon->increment = 0;
-   rc = c->ClassReference(c, args, pcon, NULL, 0, (async || pcon->net_connection));
+   rc = c->ClassReference(c, args, pmeth, NULL, 0, (async || pcon->net_connection));
 
    if (pcon->net_connection) {
-      rc = dbx_classmethod(pcon);
+      rc = dbx_classmethod(pmeth);
    }
    else {
-      rc = pcon->p_isc_so->p_CacheInvokeClassMethod(pcon->cargc - 2);
+      rc = pcon->p_isc_so->p_CacheInvokeClassMethod(pmeth->cargc - 2);
       if (rc == CACHE_SUCCESS) {
-         rc = isc_pop_value(pcon, &(pcon->output_val), DBX_DTYPE_STR);
+         rc = isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
       }
    }
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pcon, rc);
+      dbx_error_message(pmeth, rc);
    }
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
-   if (pcon->output_val.type != DBX_DTYPE_OREF) {
-      str = dbx_new_string8n(isolate, pcon->output_val.svalue.buf_addr, pcon->output_val.svalue.len_used, pcon->utf8);
+   if (pmeth->output_val.type != DBX_DTYPE_OREF) {
+      str = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
       args.GetReturnValue().Set(str);
+      dbx_request_memory_free(pcon, pmeth, 0);
       return;
    }
 
-   clx->oref =  pcon->output_val.num.oref;
+   clx->oref =  pmeth->output_val.num.oref;
    strcpy(clx->class_name, class_name);
 
+   dbx_request_memory_free(pcon, pmeth, 0);
    return;
 }
 

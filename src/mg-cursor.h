@@ -61,7 +61,7 @@ public:
                      ~mcursor                ();
 
    static mcursor *  NewInstance             (const v8::FunctionCallbackInfo<v8::Value>& args);
-
+   static int        async_callback          (mcursor *cx);
    static int        delete_mcursor_template (mcursor *cx);
 
    static void       Execute                 (const v8::FunctionCallbackInfo<v8::Value>& args);

@@ -13,7 +13,7 @@
    | not use this file except in compliance with the License.                 |
    | You may obtain a copy of the License at                                  |
    |                                                                          |
-   | http:www.apache.org/licenses/LICENSE-2.0                               |
+   | http:www.apache.org/licenses/LICENSE-2.0                                 |
    |                                                                          |
    | Unless required by applicable law or agreed to in writing, software      |
    | distributed under the License is distributed on an "AS IS" BASIS,        |
@@ -32,8 +32,8 @@
 #define DBX_NODE_VERSION         (NODE_MAJOR_VERSION * 10000) + (NODE_MINOR_VERSION * 100) + NODE_PATCH_VERSION
 
 #define DBX_VERSION_MAJOR        "2"
-#define DBX_VERSION_MINOR        "0"
-#define DBX_VERSION_BUILD        "16"
+#define DBX_VERSION_MINOR        "1"
+#define DBX_VERSION_BUILD        "17"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -378,28 +378,32 @@ DISABLE_WCAST_FUNCTION_TYPE
 
 #if DBX_NODE_VERSION >= 120000
 
-#define DBX_DBFUN_START(C, PCON) \
+#define DBX_DBFUN_START(C, PCON, PMETH) \
    if (!C->open) { \
       if (PCON && PCON->error[0]) { \
          isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, PCON->error, NewStringType::kNormal).ToLocalChecked())); \
+         dbx_request_memory_free(PCON, PMETH, 0); \
          return; \
       } \
       else { \
          isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Database not open", NewStringType::kNormal).ToLocalChecked())); \
+         dbx_request_memory_free(PCON, PMETH, 0); \
          return; \
       } \
    } \
 
 #else
 
-#define DBX_DBFUN_START(C, PCON) \
+#define DBX_DBFUN_START(C, PCON, PMETH) \
    if (!C->open) { \
       if (PCON && PCON->error[0]) { \
          isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, PCON->error))); \
+         dbx_request_memory_free(PCON, PMETH, 0); \
          return; \
       } \
       else { \
          isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Database not open"))); \
+         dbx_request_memory_free(PCON, PMETH, 0); \
          return; \
       } \
    } \
@@ -860,10 +864,6 @@ typedef struct tagDBXCON {
    short          dbtype;
    short          utf8;
    short          use_mutex;
-   short          done;
-   short          lock;
-   short          increment;
-   int            binary;
    char           type[64];
    char           path[256];
    char           username[64];
@@ -873,15 +873,6 @@ typedef struct tagDBXCON {
    char           output_device[64];
    int            error_code;
    char           error[DBX_ERROR_SIZE];
-   unsigned int   ibuffer_size;
-   unsigned int   ibuffer_used;
-   unsigned char *ibuffer;
-   int            argc;
-   int            cargc;
-   DBXVAL         args[DBX_MAXARGS];
-   ydb_buffer_t   yargs[DBX_MAXARGS];
-   DBXVAL         output_val;
-   DBXSQL         *psql;
    DBXMUTEX       *p_mutex;
    DBXZV          *p_zv;
 
@@ -898,9 +889,39 @@ typedef struct tagDBXCON {
    char           info[256];
    DBXZV          zv;
 
-   int            (* p_dbxfun) (struct tagDBXCON * pcon);
+   int            (* p_dbxfun) (struct tagDBXMETH * pmeth);
+
+   void           *pmeth_base; /* v2.1.17 */
+
+   int            log_errors;
+   int            log_functions;
+   int            log_transmissions;
+   char           log_file[256];
+   char           log_filter[512];
 
 } DBXCON, *PDBXCON;
+
+
+/* v2.1.17 */
+typedef struct tagDBXMETH {
+   short          done;
+   short          lock;
+   short          increment;
+   int            binary;
+   int            argc;
+   int            cargc;
+   unsigned int   ibuffer_size;
+   unsigned int   ibuffer_used;
+   unsigned char *ibuffer;
+   DBXVAL         args[DBX_MAXARGS];
+   ydb_buffer_t   yargs[DBX_MAXARGS];
+   DBXVAL         output_val;
+   DBXSQL         *psql;
+   int            (* p_dbxfun) (struct tagDBXMETH * pmeth);
+   DBXCON         *pcon;
+   int            error_code;
+   char           error[DBX_ERROR_SIZE];
+} DBXMETH, *PDBXMETH;
 
 
 typedef struct tagDBXQR {
@@ -919,7 +940,7 @@ struct dbx_pool_task {
    pthread_t   parent_tid;
 #endif
    int         task_id;
-   DBXCON      *pcon;
+   DBXMETH     *pmeth;
    struct dbx_pool_task *next;
 };
 
@@ -945,12 +966,18 @@ public:
 
    static v8::Persistent<v8::Function> constructor;
 
+   /* v2.1.17 */
    struct dbx_baton_t {
       DBX_DBNAME *                  c;
+      void *                        gx;
+      void *                        cx;
+      void *                        clx;
       v8::Local<v8::String>         result_str;
       v8::Local<v8::Object>         result_obj;
       v8::Persistent<v8::Function>  cb;
+      v8::Isolate *                 isolate;
       DBXCON *                      pcon;
+      DBXMETH *                     pmeth;
    };
 
 #if DBX_NODE_VERSION >= 100000
@@ -963,8 +990,8 @@ public:
                                  ~DBX_DBNAME();
    static void                   New                              (const v8::FunctionCallbackInfo<v8::Value>& args);
 
-   static dbx_baton_t *          dbx_make_baton                   (DBX_DBNAME *c, DBXCON *pcon);
-   static int                    dbx_destroy_baton                (dbx_baton_t *baton, DBXCON *pcon);
+   static dbx_baton_t *          dbx_make_baton                   (DBX_DBNAME *c, DBXMETH *pmeth);
+   static int                    dbx_destroy_baton                (dbx_baton_t *baton, DBXMETH *pmeth);
 
    static int                    dbx_queue_task                   (void * work_cb, void * after_work_cb, dbx_baton_t *baton, short context);
    static async_rtn              dbx_process_task                 (uv_work_t *req);
@@ -974,11 +1001,14 @@ public:
 
    static void                   About                            (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Version                          (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   SetLogLevel                      (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   LogMessage                       (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Charset                          (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Open                             (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Close                            (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Namespace                        (const v8::FunctionCallbackInfo<v8::Value>& args);
-   static int                    GlobalReference                  (DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXCON *pcon, DBXGREF *pgref, short context);
+   static int                    LogFunction                      (DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, void *pctx, char *name);
+   static int                    GlobalReference                  (DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXMETH *pmeth, DBXGREF *pgref, short context);
 
    static void                   Get                              (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Get_bx                           (const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -996,11 +1026,11 @@ public:
    static void                   MGlobal_Close                    (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   MGlobalQuery                     (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   MGlobalQuery_Close               (const v8::FunctionCallbackInfo<v8::Value>& args);
-   static int                    ExtFunctionReference             (DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXCON *pcon, DBXFREF *pfref, DBXFUN *pfun, short context);
+   static int                    ExtFunctionReference             (DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXMETH *pmeth, DBXFREF *pfref, DBXFUN *pfun, short context);
    static void                   ExtFunction                      (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   ExtFunction_bx                   (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   ExtFunctionEx                    (const v8::FunctionCallbackInfo<v8::Value>& args, int binary);
-   static int                    ClassReference                   (DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXCON *pcon, DBXCREF *pcref, int argc_offset, short context);
+   static int                    ClassReference                   (DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXMETH *pmeth, DBXCREF *pcref, int argc_offset, short context);
    static void                   ClassMethod                      (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   ClassMethod_bx                   (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   ClassMethodEx                    (const v8::FunctionCallbackInfo<v8::Value>& args, int binary);
@@ -1016,6 +1046,10 @@ private:
 };
 
 
+DBXMETH *                  dbx_request_memory         (DBXCON *pcon, short context);
+DBXMETH *                  dbx_request_memory_alloc   (DBXCON *pcon, short context);
+int                        dbx_request_memory_free    (DBXCON *pcon, DBXMETH *pmeth, short context);
+
 #if DBX_NODE_VERSION >= 100000
 void                       dbx_set_prototype_method   (v8::Local<v8::FunctionTemplate> t, v8::FunctionCallback callback, const char* name, const char* data);
 #else
@@ -1028,81 +1062,81 @@ v8::Local<v8::String>      dbx_new_string8            (v8::Isolate * isolate, ch
 v8::Local<v8::String>      dbx_new_string8n           (v8::Isolate * isolate, char * buffer, unsigned long len, int utf8);
 int                        dbx_write_char8            (v8::Isolate * isolate, v8::Local<v8::String> str, char * buffer, int utf8);
 
-int                        dbx_ibuffer_add            (DBXCON *pcon, v8::Isolate * isolate, int argn, v8::Local<v8::String> str, char * buffer, int buffer_len, short context);
+int                        dbx_ibuffer_add            (DBXMETH *pmeth, v8::Isolate * isolate, int argn, v8::Local<v8::String> str, char * buffer, int buffer_len, short context);
 int                        dbx_cursor_init            (void *pcx);
-int                        dbx_global_reset           (const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolate * isolate, void *pgx, int argc_offset, short context);
-int                        dbx_cursor_reset           (const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolate * isolate, void *pcx, int argc_offset, short context);
+int                        dbx_global_reset           (const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolate * isolate, DBXCON *pcon, DBXMETH *pmeth, void *pgx, int argc_offset, short context);
+int                        dbx_cursor_reset           (const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolate * isolate, DBXCON *pcon, DBXMETH *pmeth, void *pcx, int argc_offset, short context);
 
 int                        isc_load_library           (DBXCON *pcon);
 int                        isc_authenticate           (DBXCON *pcon);
-int                        isc_open                   (DBXCON *pcon);
+int                        isc_open                   (DBXMETH *pmeth);
 
 int                        isc_parse_zv               (char *zv, DBXZV * p_sv);
 int                        isc_change_namespace       (DBXCON *pcon, char *nspace);
 int                        isc_get_namespace          (DBXCON *pcon, char *nspace, int nspace_len);
-int                        isc_cleanup                (DBXCON *pcon);
-int                        isc_pop_value              (DBXCON *pcon, DBXVAL *value, int required_type);
+int                        isc_cleanup                (DBXMETH *pmeth);
+int                        isc_pop_value              (DBXMETH *pmeth, DBXVAL *value, int required_type);
 char *                     isc_callin_message         (DBXCON *pcon, int error_code);
 int                        isc_error_message          (DBXCON *pcon, int error_code);
 int                        isc_error                  (DBXCON *pcon, int error_code);
 
 
 int                        ydb_load_library           (DBXCON *pcon);
-int                        ydb_open                   (DBXCON *pcon);
+int                        ydb_open                   (DBXMETH *pmeth);
 int                        ydb_parse_zv               (char *zv, DBXZV * p_isc_sv);
 int                        ydb_change_namespace       (DBXCON *pcon, char *nspace);
 int                        ydb_get_namespace          (DBXCON *pcon, char *nspace, int nspace_len);
 int                        ydb_error_message          (DBXCON *pcon, int error_code);
 int                        ydb_error                  (DBXCON *pcon, int error_code);
-int                        ydb_function               (DBXCON *pcon, DBXFUN *pfun);
+int                        ydb_function               (DBXMETH *pmeth, DBXFUN *pfun);
 
-int                        dbx_version                (DBXCON *pcon);
-int                        dbx_open                   (DBXCON *pcon);
-int                        dbx_do_nothing             (DBXCON *pcon);
-int                        dbx_close                  (DBXCON *pcon);
-int                        dbx_namespace              (DBXCON *pcon);
-int                        dbx_reference              (DBXCON *pcon, int n);
-int                        dbx_global_reference       (DBXCON *pcon);
+int                        dbx_version                (DBXMETH *pmeth);
+int                        dbx_open                   (DBXMETH *pmeth);
+int                        dbx_do_nothing             (DBXMETH *pmeth);
+int                        dbx_close                  (DBXMETH *pmeth);
+int                        dbx_namespace              (DBXMETH *pmeth);
+int                        dbx_reference              (DBXMETH *pmeth, int n);
+int                        dbx_global_reference       (DBXMETH *pmeth);
 
-int                        dbx_get                    (DBXCON *pcon);
-int                        dbx_set                    (DBXCON *pcon);
-int                        dbx_defined                (DBXCON *pcon);
-int                        dbx_delete                 (DBXCON *pcon);
-int                        dbx_next                   (DBXCON *pcon);
-int                        dbx_previous               (DBXCON *pcon);
-int                        dbx_increment              (DBXCON *pcon);
-int                        dbx_lock                   (DBXCON *pcon);
-int                        dbx_unlock                 (DBXCON *pcon);
-int                        dbx_merge                  (DBXCON *pcon);
-int                        dbx_function_reference     (DBXCON *pcon, DBXFUN *pfun);
-int                        dbx_function               (DBXCON *pcon);
-int                        dbx_class_reference        (DBXCON *pcon, int optype);
-int                        dbx_classmethod            (DBXCON *pcon);
-int                        dbx_method                 (DBXCON *pcon);
-int                        dbx_setproperty            (DBXCON *pcon);
-int                        dbx_getproperty            (DBXCON *pcon);
-int                        dbx_sql_execute            (DBXCON *pcon);
-int                        dbx_sql_row                (DBXCON *pcon, int rn, int dir);
-int                        dbx_sql_cleanup            (DBXCON *pcon);
+int                        dbx_get                    (DBXMETH *pmeth);
+int                        dbx_set                    (DBXMETH *pmeth);
+int                        dbx_defined                (DBXMETH *pmeth);
+int                        dbx_delete                 (DBXMETH *pmeth);
+int                        dbx_next                   (DBXMETH *pmeth);
+int                        dbx_previous               (DBXMETH *pmeth);
+int                        dbx_increment              (DBXMETH *pmeth);
+int                        dbx_lock                   (DBXMETH *pmeth);
+int                        dbx_unlock                 (DBXMETH *pmeth);
+int                        dbx_merge                  (DBXMETH *pmeth);
+int                        dbx_function_reference     (DBXMETH *pmeth, DBXFUN *pfun);
+int                        dbx_function               (DBXMETH *pmeth);
+int                        dbx_class_reference        (DBXMETH *pmeth, int optype);
+int                        dbx_classmethod            (DBXMETH *pmeth);
+int                        dbx_method                 (DBXMETH *pmeth);
+int                        dbx_setproperty            (DBXMETH *pmeth);
+int                        dbx_getproperty            (DBXMETH *pmeth);
+int                        dbx_sql_execute            (DBXMETH *pmeth);
+int                        dbx_sql_row                (DBXMETH *pmeth, int rn, int dir);
+int                        dbx_sql_cleanup            (DBXMETH *pmeth);
 
-int                        dbx_global_directory       (DBXCON *pcon, DBXQR *pqr_prev, short dir, int *counter);
-int                        dbx_global_order           (DBXCON *pcon, DBXQR *pqr_prev, short dir, short getdata);
-int                        dbx_global_query           (DBXCON *pcon, DBXQR *pqr_next, DBXQR *pqr_prev, short dir, short getdata);
-int                        dbx_parse_global_reference (DBXCON *pcon, DBXQR *pqr, char *global_ref, int global_ref_len);
+int                        dbx_global_directory       (DBXMETH *pmeth, DBXQR *pqr_prev, short dir, int *counter);
+int                        dbx_global_order           (DBXMETH *pmeth, DBXQR *pqr_prev, short dir, short getdata);
+int                        dbx_global_query           (DBXMETH *pmeth, DBXQR *pqr_next, DBXQR *pqr_prev, short dir, short getdata);
+int                        dbx_parse_global_reference (DBXMETH *pmeth, DBXQR *pqr, char *global_ref, int global_ref_len);
 
-int                        dbx_launch_thread          (DBXCON *pcon);
+int                        dbx_launch_thread          (DBXMETH *pmeth);
 #if defined(_WIN32)
 LPTHREAD_START_ROUTINE     dbx_thread_main            (LPVOID pargs);
 #else
 void *                     dbx_thread_main            (void *pargs);
 #endif
 
-struct dbx_pool_task *     dbx_pool_add_task          (DBXCON *pcon);
+struct dbx_pool_task *     dbx_pool_add_task          (DBXMETH *pmeth);
 struct dbx_pool_task *     dbx_pool_get_task          (void);
 void                       dbx_pool_execute_task      (struct dbx_pool_task *task, int thread_id);
 void *                     dbx_pool_requests_loop     (void *data);
 int                        dbx_pool_thread_init       (DBXCON *pcon, int num_threads);
-int                        dbx_pool_submit_task       (DBXCON *pcon);
+int                        dbx_pool_submit_task       (DBXMETH *pmeth);
 int                        dbx_add_block_size         (unsigned char *block, unsigned long offset, unsigned long data_len, int dsort, int dtype);
 unsigned long              dbx_get_block_size         (unsigned char *block, unsigned long offset, int *dsort, int *dtype);
 int                        dbx_set_size               (unsigned char *str, unsigned long data_len);
@@ -1117,15 +1151,17 @@ int                        dbx_lcase                  (char *string);
 
 int                        dbx_create_string          (DBXSTR *pstr, void *data, short type);
 
-int                        dbx_buffer_dump            (DBXCON *pcon, void *buffer, unsigned int len, char *title, unsigned char csize, short mode);
-int                        dbx_log_event              (char *message, char *title, int level);
+int                        dbx_log_transmission       (DBXCON *pcon, DBXMETH *pmeth, char *name);
+int                        dbx_buffer_dump            (DBXMETH *pmeth, void *buffer, unsigned int len, char *title, unsigned char csize, short mode);
+int                        dbx_log_event              (DBXCON *pcon, char *message, char *title, int level);
+int                        dbx_log_buffer             (DBXCON *pcon, char *buffer, int buffer_len, char *title, int level);
 int                        dbx_test_file_access       (char *file, int mode);
 DBXPLIB                    dbx_dso_load               (char * library);
 DBXPROC                    dbx_dso_sym                (DBXPLIB p_library, char * symbol);
 int                        dbx_dso_unload             (DBXPLIB p_library);
 DBXTHID                    dbx_current_thread_id      (void);
 unsigned long              dbx_current_process_id     (void);
-int                        dbx_error_message          (DBXCON *pcon, int error_code);
+int                        dbx_error_message          (DBXMETH *pmeth, int error_code);
 
 int                        dbx_mutex_create           (DBXMUTEX *p_mutex);
 int                        dbx_mutex_lock             (DBXMUTEX *p_mutex, int timeout);

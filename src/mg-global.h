@@ -54,7 +54,8 @@ public:
                      ~mglobal                ();
 
    static mglobal *  NewInstance             (const v8::FunctionCallbackInfo<v8::Value>& args);
-   static int        delete_mglobal_template (mglobal *cx);
+   static int        async_callback          (mglobal *gx);
+   static int        delete_mglobal_template (mglobal *gx);
 
    static void       Get         (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void       Get_bx      (const v8::FunctionCallbackInfo<v8::Value>& args);

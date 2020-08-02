@@ -388,7 +388,7 @@ typedef struct tagNETXSOCK {
 int                     netx_load_winsock             (DBXCON *pcon, int context);
 int                     netx_tcp_connect              (DBXCON *pcon, int context);
 int                     netx_tcp_handshake            (DBXCON *pcon, int context);
-int                     netx_tcp_command              (DBXCON *pcon, int command, int context);
+int                     netx_tcp_command              (DBXMETH *pmeth, int command, int context);
 int                     netx_tcp_connect_ex           (DBXCON *pcon, xLPSOCKADDR p_srv_addr, socklen_netx srv_addr_len, int timeout);
 int                     netx_tcp_disconnect           (DBXCON *pcon, int context);
 int                     netx_tcp_write                (DBXCON *pcon, unsigned char *data, int size);

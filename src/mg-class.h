@@ -54,8 +54,8 @@ class mclass : public node::ObjectWrap
                      ~mclass                 ();
 
    static mclass *   NewInstance             (const v8::FunctionCallbackInfo<v8::Value>& args);
-
-   static int        delete_mclass_template  (mclass *cx);
+   static int        async_callback          (mclass *clx);
+   static int        delete_mclass_template  (mclass *clx);
 
    static void       ClassMethod             (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void       ClassMethod_bx          (const v8::FunctionCallbackInfo<v8::Value>& args);
