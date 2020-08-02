@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-8 July 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+1 August 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v14.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -20,6 +20,7 @@ Contents
 * [Direct access to SQL: MGSQL and InterSystems SQL (IRIS and Cache)](#DBSQL)
 * [Working with binary data](#Binary)
 * [Using Node.js/V8 worker threads](#Threads)
+* [The Event Log](#EventLog)
 * [License](#License)
 
 ## <a name="PreReq"></a> Pre-requisites 
@@ -940,6 +941,36 @@ The following scheme illustrates how **mg-dbx** should be used in threaded Node.
           parentPort.postMessage("threadId=" + threadId + " Done");
        }
 
+## <a name="EventLog"></a> The Event Log
+
+**mg\-dbx** provides an Event Log facility for recording errors in a physical file and, as an aid to debugging, recording the **mg\-dbx** functions called by the application.  This Log facility can also be used by Node.js applications.
+
+To use this facility, the Event Log file must be specified using the following function:
+
+
+       db.setloglevel(<log_file>, <Log_level>, <log_filter>);
+
+Where:
+
+* **log\_file**: The name (and path to) the log file you wish to use. The default is c:/temp/mg-dbx.log (or /tmp/mg-dbx.log under UNIX).
+* **log\_level**: A set of characters to include one or more of the following:
+	* **e** - Log error conditions.
+	* **f** - Log all **mg\-dbx** function calls (function name and arguments).
+	* **t** - Log the request data buffers to be transmitted from **mg\-dbx** to the DB Server.
+* **log\_filter**: A comma-separated list of functions that you wish the log directive to be active for. This should be left empty to activate the log for all functions.
+
+Examples:
+
+      db.setloglevel("c:/temp/mg-dbx.log", "e", "");
+      db.setloglevel("/tmp/mg-dbx.log", "ft", "dbx::set,mglobal::set,mcursor::execute");
+
+Node.js applications can write their own messages to the Event Log using the following function:
+
+      db.logmessage(<message>, <title>);
+
+Logging can be switched off by calling the **setloglevel** function without specifying a log level.  For example:
+
+      db.setloglevel("c:/temp/mg-dbx.log");
 
 ## <a name="License"></a> License
 
@@ -1044,4 +1075,10 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v2.0.16 (8 July 2020)
 
 * Correct a fault that could lead to **mg-dbx** incorrectly reporting _'Database not open'_ errors when connecting to YottaDB via its API in multithreaded Node.js applications.
+
+### v2.1.17 (1 August 2020)
+
+* Introduce a log facility to record error conditions and run-time information to assist with debugging.
+* Change the default for the **multihtreaded** property to be **true**.  This can be set to **false** (in the **open()** method) if you are sure that your application does not use Node.js/V8 threading and does not call **mg\-dbx** functionality asynchronously.  If in doubt, it is safer to leave this property set to **true**.
+* A number of faults related to the use of **mg\-dbx** functionality in Node.js/v8 worker threads have been corrected.  In particular, it was noticed that callback functions were not being fired correctly for some asynchronous invocations of **mg\-dbx** methods.
 
