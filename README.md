@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-1 August 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+12 August 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v14.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -118,7 +118,7 @@ Link all the **zmgsi** routines and check the installation:
 
 Note that the version of **zmgsi** is successfully displayed.
 
-Finally, add the following lines to the interface file (**cm.ci** in the example used in the db.open() method).
+Finally, add the following lines to the interface file (**zmgsi.ci** in the example used in the db.open() method).
 
        sqlemg: ydb_string_t * sqlemg^%zmgsis(I:ydb_string_t*, I:ydb_string_t *, I:ydb_string_t *)
        sqlrow: ydb_string_t * sqlrow^%zmgsis(I:ydb_string_t*, I:ydb_string_t *, I:ydb_string_t *)
@@ -275,7 +275,7 @@ Assuming an 'out of the box' YottaDB installation under **/usr/local/lib/yottadb
            envvars = envvars + "ydb_rel=r1.22_x86_64\n"
            envvars = envvars + "ydb_gbldir=/root/.yottadb/r1.22_x86_64/g/yottadb.gld\n"
            envvars = envvars + "ydb_routines=/root/.yottadb/r1.22_x86_64/o*(/root/.yottadb/r1.22_x86_64/r /root/.yottadb/r) /usr/local/lib/yottadb/r122/libyottadbutil.so\n"
-           envvars = envvars + "ydb_ci=/usr/local/lib/yottadb/r122/cm.ci\n"
+           envvars = envvars + "ydb_ci=/usr/local/lib/yottadb/r122/zmgsi.ci\n"
            envvars = envvars + "\n"
 
            var open = db.open({
@@ -782,6 +782,18 @@ Example 1 (successful execution):
        {
            "sqlcode": 0,
            "sqlstate": "00000",
+           "columns": [
+                         {
+                            "name": "Number",
+                            "type": "INTEGER"
+                         },
+                           "name": "Name",
+                            "type": "VARCHAR"
+                         },
+                           "name": "DateOfBirth",
+                            "type": "DATE"
+                         }
+                      ]
        }
 
 
@@ -1081,4 +1093,14 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Introduce a log facility to record error conditions and run-time information to assist with debugging.
 * Change the default for the **multihtreaded** property to be **true**.  This can be set to **false** (in the **open()** method) if you are sure that your application does not use Node.js/V8 threading and does not call **mg\-dbx** functionality asynchronously.  If in doubt, it is safer to leave this property set to **true**.
 * A number of faults related to the use of **mg\-dbx** functionality in Node.js/v8 worker threads have been corrected.  In particular, it was noticed that callback functions were not being fired correctly for some asynchronous invocations of **mg\-dbx** methods.
+
+### v2.1.18 (12 August 2020)
+
+* Correct a fault that could lead to unpredictable behaviour and failures if more than one V8 worker thread concurrently requested a global directory listing.
+	* For example: query = new cursor(db, {global: ""}, {globaldirectory: true});
+* For SQL SELECT queries, return the column names and their associated data types.
+	* This metadata is presented as a **columns** array within the object returned from the SQL Execute method.
+	* The **columns** array is created in SELECT order.
+* Attempt to capture Windows OS exceptions in the event log.
+	* The default event log is c:\temp\mg-dbx.log under Windows and /tmp/mg-dbx.log under UNIX.
 
