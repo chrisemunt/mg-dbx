@@ -103,6 +103,15 @@ Version 2.1.17 1 August 2020:
    Fix A number of faults related to the use of mg-dbx functionality in Node.js/v8 worker threads.
    - Notably, callback functions were not being fired correctly for some asynchronous invocations of mg-dbx methods.
 
+Version 2.1.18 12 August 2020:
+   Correct a fault that could lead to unpredictable behaviour and failures if more than one V8 worker thread concurrently requested a global directory listing
+   - For example: query = new cursor(db, {global: ""}, {globaldirectory: true});
+   For SQL SELECT queries, return the column names and their associated data types.
+   - This metadata is presented as a columns array within the object returned from the SQL Execute method.
+   - The columns array is created in SELECT order.
+   Attempt to capture Windows OS exceptions in the event log.
+   - The default event log is c:\temp\mg-dbx.log under Windows and /tmp/mg-dbx.log under UNIX.
+
 */
 
 
@@ -470,16 +479,25 @@ async_rtn DBX_DBNAME::dbx_invoke_callback(uv_work_t *req)
 
 async_rtn DBX_DBNAME::dbx_invoke_callback_sql_execute(uv_work_t *req)
 {
+   int cn;
    Isolate* isolate = Isolate::GetCurrent();
+   HandleScope scope(isolate);
 #if DBX_NODE_VERSION >= 100000
    Local<Context> icontext = isolate->GetCurrentContext();
 #endif
-   HandleScope scope(isolate);
    Local<String> key;
+   Local<Object> obj1;
 
    dbx_baton_t *baton = static_cast<dbx_baton_t *>(req->data);
 
-   baton->c->Unref();
+   if (baton->gx)
+      ((mglobal *) baton->gx)->async_callback((mglobal *) baton->gx);
+   else if (baton->cx)
+      ((mcursor *) baton->cx)->async_callback((mcursor *) baton->cx);
+   else if (baton->clx)
+      ((mclass *) baton->clx)->async_callback((mclass *) baton->clx);
+   else
+      baton->c->Unref();
 
    Local<Value> argv[2];
 
@@ -497,6 +515,23 @@ async_rtn DBX_DBNAME::dbx_invoke_callback_sql_execute(uv_work_t *req)
    if (baton->pmeth->pcon->error[0]) {
       key = dbx_new_string8(isolate, (char *) "error", 0);
       DBX_SET(baton->result_obj, key, dbx_new_string8(isolate, baton->pmeth->pcon->error, 0));
+   }
+   else if (baton->pmeth->psql->no_cols > 0) { /* v2.1.18 */
+
+      Local<Array> a = DBX_ARRAY_NEW(baton->pmeth->psql->no_cols);
+      key = dbx_new_string8(isolate, (char *) "columns", 0);
+      DBX_SET(baton->result_obj, key, a);
+
+      for (cn = 0; cn < baton->pmeth->psql->no_cols; cn ++) {
+         obj1 = DBX_OBJECT_NEW();
+         DBX_SET(a, cn, obj1);
+         key = dbx_new_string8(isolate, (char *) "name", 0);
+         DBX_SET(obj1, key, dbx_new_string8(isolate, baton->pmeth->psql->cols[cn]->name.buf_addr, 0));
+         if (baton->pmeth->psql->cols[cn]->stype) {
+            key = dbx_new_string8(isolate, (char *) "type", 0);
+            DBX_SET(obj1, key, dbx_new_string8(isolate, baton->pmeth->psql->cols[cn]->stype, 0));
+         }
+      }
    }
 
    argv[1] =  baton->result_obj;
@@ -562,6 +597,8 @@ void DBX_DBNAME::Version(const FunctionCallbackInfo<Value>& args)
 
    dbx_request_memory_free(pcon, pmeth, 0);
    args.GetReturnValue().Set(result);
+
+   return;
 }
 
 
@@ -2828,6 +2865,30 @@ void DBX_DBNAME::Sleep(const FunctionCallbackInfo<Value>& args)
 
 void DBX_DBNAME::Benchmark(const FunctionCallbackInfo<Value>& args)
 {
+#if 0
+   int n, rc;
+   char buffer[256];
+   DBXCON *pcon;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   c->dbx_count ++;
+
+   pcon = c->pcon;
+/*
+   dbx_enter_critical_section((void *) &dbx_async_mutex);
+*/
+   DBX_DB_LOCK(rc, 0);
+
+   for (n = 0; n < 10; n ++) {
+      sprintf(buffer, "thread=%lu; line %d", (unsigned long) dbx_current_thread_id(), n);
+      dbx_log_event(pcon, buffer, "Critical Section Security Test (DB)", 0);
+      dbx_sleep(500);
+   }
+/*
+   dbx_leave_critical_section((void *) &dbx_async_mutex);
+*/
+   DBX_DB_UNLOCK(rc);
+
+#else
    char ibuffer[256];
    char obuffer[256];
    Local<String> result;
@@ -2840,6 +2901,7 @@ void DBX_DBNAME::Benchmark(const FunctionCallbackInfo<Value>& args)
    strcpy(obuffer, "output string");
    result = dbx_new_string8(isolate, obuffer, 1);
    args.GetReturnValue().Set(result);
+#endif
 }
 
 
@@ -3160,6 +3222,10 @@ int dbx_ibuffer_add(DBXMETH *pmeth, v8::Isolate * isolate, int argn, v8::Local<v
    unsigned char *p, *phead;
    DBXCON *pcon = pmeth->pcon;
 
+#ifdef _WIN32
+__try {
+#endif
+
    if (buffer)
       len = buffer_len;
    else
@@ -3226,6 +3292,26 @@ int dbx_ibuffer_add(DBXMETH *pmeth, v8::Isolate * isolate, int argn, v8::Local<v
    }
 
    return len;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_ibuffer_add: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -3238,6 +3324,10 @@ int dbx_global_reset(const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolat
    v8::Local<v8::Object> obj;
    v8::Local<v8::String> str;
    mglobal *gx = (mglobal *) pgx;
+
+#ifdef _WIN32
+__try {
+#endif
 
    dbx_write_char8(isolate, DBX_TO_STRING(args[argc_offset]), global_name, pcon->utf8);
    if (global_name[0] == '\0') {
@@ -3311,6 +3401,26 @@ int dbx_global_reset(const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolat
    }
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_global_reset: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -3346,6 +3456,10 @@ int dbx_cursor_reset(const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolat
    v8::Local<v8::String> key;
    v8::Local<v8::String> value;
    mcursor *cx = (mcursor *) pcx;
+
+#ifdef _WIN32
+__try {
+#endif
 
    if (pmeth->argc < 1) {
       return -1;
@@ -3530,6 +3644,26 @@ int dbx_cursor_reset(const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolat
    }
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_cursor_reset: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -3539,6 +3673,10 @@ int isc_load_library(DBXCON *pcon)
    char primlib[DBX_ERROR_SIZE], primerr[DBX_ERROR_SIZE];
    char verfile[256], fun[64];
    char *libnam[16];
+
+#ifdef _WIN32
+__try {
+#endif
 
    result = CACHE_SUCCESS;
 
@@ -4032,6 +4170,26 @@ isc_load_library_exit:
    result = CACHE_SUCCESS;
 
    return result;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:isc_load_library: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -4041,6 +4199,10 @@ int isc_authenticate(DBXCON *pcon)
    unsigned char reopen;
    int termflag, timeout;
    char buffer[256];
+
+#ifdef _WIN32
+__try {
+#endif
 
    termflag = 0;
 	timeout = 15;
@@ -4200,6 +4362,26 @@ isc_authenticate_reopen:
    }
 
    return 1;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:isc_authenticate: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -4207,6 +4389,10 @@ int isc_open(DBXMETH *pmeth)
 {
    int rc, error_code, result;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    error_code = 0;
 
@@ -4263,6 +4449,26 @@ isc_open_exit:
    }
 
    return rc;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:isc_open: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -4332,6 +4538,10 @@ int isc_change_namespace(DBXCON *pcon, char *nspace)
    int rc, len;
    CACHE_ASTR expr;
 
+#ifdef _WIN32
+__try {
+#endif
+
    len = (int) strlen(nspace);
    if (len == 0 || len > 64) {
       return CACHE_ERNAMSP;
@@ -4351,6 +4561,26 @@ int isc_change_namespace(DBXCON *pcon, char *nspace)
    rc = pcon->p_isc_so->p_CacheExecuteA(&expr);
 
    return rc;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:isc_authenticate: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -4359,6 +4589,10 @@ int isc_get_namespace(DBXCON *pcon, char *nspace, int nspace_len)
    int rc;
    CACHE_ASTR retval;
    CACHE_ASTR expr;
+
+#ifdef _WIN32
+__try {
+#endif
 
    *nspace = '\0';
    strcpy((char *) expr.str, "$Namespace");
@@ -4374,6 +4608,26 @@ int isc_get_namespace(DBXCON *pcon, char *nspace, int nspace_len)
       nspace[retval.len] = '\0';
    }
    return rc;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:isc_change_namespace: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -4381,6 +4635,10 @@ int isc_cleanup(DBXMETH *pmeth)
 {
    int n;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    for (n = 0; n < DBX_MAXARGS; n ++) {
       if (pmeth->args[n].cvalue.pstr) {
@@ -4390,6 +4648,26 @@ int isc_cleanup(DBXMETH *pmeth)
       }
    }
    return 1;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:isc_cleanup: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -4400,6 +4678,10 @@ int isc_pop_value(DBXMETH *pmeth, DBXVAL *value, int required_type)
    char *pstr, *p, *outstr;
    CACHE_EXSTR zstr;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    ex = 0;
    zstr.len = 0;
@@ -4485,12 +4767,36 @@ int isc_pop_value(DBXMETH *pmeth, DBXVAL *value, int required_type)
 isc_pop_value_exit:
 
    return rc;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:isc_pop_value: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
 char * isc_callin_message(DBXCON *pcon, int error_code)
 {
    char *p;
+
+#ifdef _WIN32
+__try {
+#endif
 
    switch (error_code) {
       case CACHE_SUCCESS:
@@ -4585,6 +4891,26 @@ char * isc_callin_message(DBXCON *pcon, int error_code)
          break;
    }
    return p;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:isc_callin_message: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -4592,6 +4918,10 @@ int isc_error_message(DBXCON *pcon, int error_code)
 {
    int size, size1, len;
    CACHE_ASTR *pcerror;
+
+#ifdef _WIN32
+__try {
+#endif
 
    size = DBX_ERROR_SIZE;
 
@@ -4655,12 +4985,36 @@ int isc_error_message(DBXCON *pcon, int error_code)
    pcon->error[size - 1] = '\0';
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:isc_error_message: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
 int isc_error(DBXCON *pcon, int error_code)
 {
    int size, size1;
+
+#ifdef _WIN32
+__try {
+#endif
 
    size = DBX_ERROR_SIZE;
    size1 = size - (int) strlen(pcon->error);
@@ -4747,6 +5101,26 @@ int isc_error(DBXCON *pcon, int error_code)
    }
 
    return 1;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:isc_error: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -5290,6 +5664,10 @@ int dbx_version(DBXMETH *pmeth)
    char buffer[256];
    DBXCON *pcon = pmeth->pcon;
 
+#ifdef _WIN32
+__try {
+#endif
+
    T_SPRINTF((char *) buffer, _dbxso(buffer), "mg-dbx: version: %s; ABI: %d", DBX_VERSION, NODE_MODULE_VERSION);
 
    if (pcon->p_zv && pcon->p_zv->version[0]) {
@@ -5305,6 +5683,26 @@ int dbx_version(DBXMETH *pmeth)
    dbx_create_string(&(pmeth->output_val.svalue), (void *) buffer, DBX_DTYPE_STR8);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_version: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -5312,6 +5710,10 @@ int dbx_open(DBXMETH *pmeth)
 {
    int rc;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    if (!pcon->dbtype) {
       strcpy(pcon->error, "Unable to determine the database type");
@@ -5391,6 +5793,26 @@ int dbx_open(DBXMETH *pmeth)
 dbx_open_exit:
 
    return rc;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_open: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -5407,6 +5829,10 @@ int dbx_close(DBXMETH *pmeth)
 {
    int no_connections;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    no_connections = 0;
 
@@ -5485,6 +5911,26 @@ int dbx_close(DBXMETH *pmeth)
    T_STRCPY(pcon->output_device, _dbxso(pcon->output_device), "");
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_close: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -5493,6 +5939,10 @@ int dbx_namespace(DBXMETH *pmeth)
    int rc;
    char nspace[256];
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -5533,6 +5983,26 @@ int dbx_namespace(DBXMETH *pmeth)
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_namespace: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -5541,6 +6011,10 @@ int dbx_reference(DBXMETH *pmeth, int n)
    int rc;
    unsigned int ne;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
 /*
 {
@@ -5585,6 +6059,26 @@ int dbx_reference(DBXMETH *pmeth, int n)
    }
 
    return rc;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_reference: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -5592,6 +6086,10 @@ int dbx_global_reference(DBXMETH *pmeth)
 {
    int n, rc;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    rc = CACHE_SUCCESS;
    if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
@@ -5626,6 +6124,26 @@ int dbx_global_reference(DBXMETH *pmeth)
       }
    }
    return rc;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_global_reference: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -5633,6 +6151,10 @@ int dbx_get(DBXMETH *pmeth)
 {
    int rc;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -5671,6 +6193,26 @@ dbx_get_exit:
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_get: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -5678,6 +6220,10 @@ int dbx_set(DBXMETH *pmeth)
 {
    int rc;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -5713,6 +6259,26 @@ dbx_set_exit:
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_set: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -5720,6 +6286,10 @@ int dbx_defined(DBXMETH *pmeth)
 {
    int rc, n;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -5758,6 +6328,26 @@ dbx_defined_exit:
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_defined: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -5766,6 +6356,10 @@ int dbx_delete(DBXMETH *pmeth)
 {
    int rc, n;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -5804,6 +6398,26 @@ dbx_delete_exit:
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_delete: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -5811,6 +6425,10 @@ int dbx_next(DBXMETH *pmeth)
 {
    int rc;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -5845,6 +6463,26 @@ dbx_next_exit:
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_next: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -5852,6 +6490,10 @@ int dbx_previous(DBXMETH *pmeth)
 {
    int rc;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -5886,6 +6528,26 @@ dbx_previous_exit:
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_previous: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -5893,6 +6555,10 @@ int dbx_increment(DBXMETH *pmeth)
 {
    int rc;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -5928,6 +6594,26 @@ dbx_increment_exit:
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_increment: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -5937,6 +6623,10 @@ int dbx_lock(DBXMETH *pmeth)
    unsigned long long timeout_nsec;
    char buffer[32];
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -6000,6 +6690,26 @@ dbx_lock_exit:
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_lock: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -6007,6 +6717,10 @@ int dbx_unlock(DBXMETH *pmeth)
 {
    int rc, retval;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -6052,6 +6766,26 @@ dbx_unlock_exit:
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_unlock: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -6065,6 +6799,10 @@ int dbx_merge(DBXMETH *pmeth)
    DBXFUN fun, *pfun;
    CACHE_EXSTR zstr;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -6227,6 +6965,26 @@ dbx_merge_exit:
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_merge: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -6234,6 +6992,10 @@ int dbx_function_reference(DBXMETH *pmeth, DBXFUN *pfun)
 {
    int n, rc;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    rc = CACHE_SUCCESS;
 
@@ -6262,6 +7024,26 @@ int dbx_function_reference(DBXMETH *pmeth, DBXFUN *pfun)
       }
    }
    return rc;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_function_reference: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -6270,6 +7052,10 @@ int dbx_function(DBXMETH *pmeth)
    int rc;
    DBXFUN fun;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -6305,6 +7091,26 @@ dbx_function_exit:
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_function: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -6312,6 +7118,10 @@ int dbx_class_reference(DBXMETH *pmeth, int optype)
 {
    int n, rc;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    rc = CACHE_SUCCESS;
 
@@ -6340,6 +7150,26 @@ int dbx_class_reference(DBXMETH *pmeth, int optype)
    }
 
    return rc;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_class_reference: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -6347,6 +7177,10 @@ int dbx_classmethod(DBXMETH *pmeth)
 {
    int rc;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -6378,6 +7212,26 @@ dbx_classmethod_exit:
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_classmethod: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -6385,6 +7239,10 @@ int dbx_method(DBXMETH *pmeth)
 {
    int rc;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -6416,6 +7274,26 @@ dbx_method_exit:
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_method: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -6423,6 +7301,10 @@ int dbx_setproperty(DBXMETH *pmeth)
 {
    int rc;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -6454,6 +7336,26 @@ dbx_setproperty_exit:
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_setproperty: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -6461,6 +7363,10 @@ int dbx_getproperty(DBXMETH *pmeth)
 {
    int rc;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    DBX_DB_LOCK(rc, 0);
 
@@ -6492,6 +7398,26 @@ dbx_getproperty_exit:
    DBX_DB_UNLOCK(rc);
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_getproperty: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -6502,6 +7428,10 @@ int dbx_sql_execute(DBXMETH *pmeth)
    char label[16], routine[16], params[9], buffer[8];
    DBXFUN fun;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    pmeth->psql->no_cols = 0;
    pmeth->psql->row_no = 0;
@@ -6648,7 +7578,14 @@ int dbx_sql_execute(DBXMETH *pmeth)
       strncpy(pmeth->psql->cols[cn]->name.buf_addr, pmeth->output_val.svalue.buf_addr + offset, len);
       pmeth->psql->cols[cn]->name.buf_addr[len] = '\0';
       pmeth->psql->cols[cn]->name.len_used = len;
-
+      /* v2.1.18 */
+      pmeth->psql->cols[cn]->stype = strstr(pmeth->psql->cols[cn]->name.buf_addr, "|");
+      if (pmeth->psql->cols[cn]->stype) {
+         *(pmeth->psql->cols[cn]->stype) = '\0';
+         pmeth->psql->cols[cn]->stype ++;
+         pmeth->psql->cols[cn]->name.len_used = (unsigned int) strlen(pmeth->psql->cols[cn]->name.buf_addr);
+      }
+      
       offset += len;
    }
    pmeth->psql->no_cols = no_cols;
@@ -6657,6 +7594,26 @@ int dbx_sql_execute(DBXMETH *pmeth)
 dbx_sql_execute_exit:
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_sql_execute: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -6667,6 +7624,10 @@ int dbx_sql_row(DBXMETH *pmeth, int rn, int dir)
    char label[16], routine[16], params[9], buffer[8], rowstr[8];
    DBXFUN fun;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    eod = 0;
    pmeth->psql->sqlcode = 0;
@@ -6813,6 +7774,26 @@ int dbx_sql_row(DBXMETH *pmeth, int rn, int dir)
 dbx_sql_row_exit:
 
    return eod;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_sql_row: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -6822,6 +7803,10 @@ int dbx_sql_cleanup(DBXMETH *pmeth)
    char label[16], routine[16], params[9], buffer[8];
    DBXFUN fun;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    pmeth->psql->sqlcode = 0;
    strcpy(pmeth->psql->sqlstate, "00000");
@@ -6925,6 +7910,26 @@ int dbx_sql_cleanup(DBXMETH *pmeth)
    }
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_sql_cleanup: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -6934,6 +7939,10 @@ int dbx_global_directory(DBXMETH *pmeth, DBXQR *pqr_prev, short dir, int *counte
    char *p;
    char buffer[256], tmpglo[32];
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    eod = 0;
 
@@ -7090,6 +8099,26 @@ int dbx_global_directory(DBXMETH *pmeth, DBXQR *pqr_prev, short dir, int *counte
    }
 
    return eod;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_global_directory: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -7097,6 +8126,10 @@ int dbx_global_order(DBXMETH *pmeth, DBXQR *pqr_prev, short dir, short getdata)
 {
    int rc, n;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    if (pcon->log_transmissions) {
       int nx;
@@ -7193,6 +8226,26 @@ int dbx_global_order(DBXMETH *pmeth, DBXQR *pqr_prev, short dir, short getdata)
    }
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_global_order: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -7200,6 +8253,10 @@ int dbx_global_query(DBXMETH *pmeth, DBXQR *pqr_next, DBXQR *pqr_prev, short dir
 {
    int rc, n, eod;
    DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
 
    eod = 0;
 
@@ -7318,6 +8375,26 @@ int dbx_global_query(DBXMETH *pmeth, DBXQR *pqr_next, DBXQR *pqr_prev, short dir
    }
 
    return eod;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_global_query: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -7326,6 +8403,10 @@ int dbx_parse_global_reference(DBXMETH *pmeth, DBXQR *pqr, char *global_ref, int
    int n, nq;
    unsigned int len;
    char *p, *p1, *pc, *pc0;
+
+#ifdef _WIN32
+__try {
+#endif
 
    if (global_ref_len == 0) {
       global_ref_len = (int) strlen(global_ref);
@@ -7415,6 +8496,26 @@ int dbx_parse_global_reference(DBXMETH *pmeth, DBXQR *pqr, char *global_ref, int
    }
 
    return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_parse_global_reference: %x", code);
+      dbx_log_event(pmeth->pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
 }
 
 
@@ -8096,7 +9197,7 @@ __try {
 
 #ifdef _WIN32
 }
-__except (EXCEPTION_EXECUTE_HANDLER ) {
+__except (EXCEPTION_EXECUTE_HANDLER) {
       return 0;
 }
 
@@ -8161,7 +9262,7 @@ __try {
 
 #ifdef _WIN32
 }
-__except (EXCEPTION_EXECUTE_HANDLER ) {
+__except (EXCEPTION_EXECUTE_HANDLER) {
       return 0;
 }
 

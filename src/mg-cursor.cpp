@@ -194,9 +194,10 @@ int mcursor::delete_mcursor_template(mcursor *cx)
 void mcursor::Execute(const FunctionCallbackInfo<Value>& args)
 {
    short async;
+   int cn;
    DBXCON *pcon;
    DBXMETH *pmeth;
-   Local<Object> obj;
+   Local<Object> obj, obj1;
    Local<String> key;
    mcursor *cx = ObjectWrap::Unwrap<mcursor>(args.This());
    MG_CURSOR_CHECK_CLASS(cx);
@@ -258,6 +259,23 @@ void mcursor::Execute(const FunctionCallbackInfo<Value>& args)
    if (pcon->error[0]) {
       key = dbx_new_string8(isolate, (char *) "error", 0);
       DBX_SET(obj, key, dbx_new_string8(isolate, pcon->error, 0));
+   }
+   else if (pmeth->psql->no_cols > 0) { /* v2.1.18 */
+
+      Local<Array> a = DBX_ARRAY_NEW(pmeth->psql->no_cols);
+      key = dbx_new_string8(isolate, (char *) "columns", 0);
+      DBX_SET(obj, key, a);
+
+      for (cn = 0; cn < pmeth->psql->no_cols; cn ++) {
+         obj1 = DBX_OBJECT_NEW();
+         DBX_SET(a, cn, obj1);
+         key = dbx_new_string8(isolate, (char *) "name", 0);
+         DBX_SET(obj1, key, dbx_new_string8(isolate, pmeth->psql->cols[cn]->name.buf_addr, 0));
+         if (pmeth->psql->cols[cn]->stype) {
+            key = dbx_new_string8(isolate, (char *) "type", 0);
+            DBX_SET(obj1, key, dbx_new_string8(isolate, pmeth->psql->cols[cn]->stype, 0));
+         }
+      }
    }
 
    args.GetReturnValue().Set(obj);
@@ -480,8 +498,16 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
       dbx_request_memory_free(pcon, pmeth, 0);
       return;
    }
-   else if (cx->context == 9) {   
+   else if (cx->context == 9) {
+
+      /* v2.1.18 */
+      DBX_DBFUN_START(c, pcon, pmeth);
+      DBX_DB_LOCK(n, 0);
+
       eod = dbx_global_directory(pmeth, cx->pqr_prev, 1, &(cx->counter));
+
+      DBX_DBFUN_END(c);
+      DBX_DB_UNLOCK(n);
 
       if (eod) {
          args.GetReturnValue().Set(DBX_NULL());
@@ -680,7 +706,14 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
    }
    else if (cx->context == 9) {
    
+      /* v2.1.18 */
+      DBX_DBFUN_START(c, pcon, pmeth);
+      DBX_DB_LOCK(n, 0);
+
       eod = dbx_global_directory(pmeth, cx->pqr_prev, -1, &(cx->counter));
+
+      DBX_DBFUN_END(c);
+      DBX_DB_UNLOCK(n);
 
       if (eod) {
          args.GetReturnValue().Set(DBX_NULL());
@@ -842,6 +875,4 @@ void mcursor::Close(const FunctionCallbackInfo<Value>& args)
    dbx_request_memory_free(pcon, pmeth, 0);
    return;
 }
-
-
 

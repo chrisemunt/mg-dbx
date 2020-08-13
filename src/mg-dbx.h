@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "2"
 #define DBX_VERSION_MINOR        "1"
-#define DBX_VERSION_BUILD        "17"
+#define DBX_VERSION_BUILD        "18"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -721,6 +721,7 @@ typedef struct tagDBXCREF {
 typedef struct tagDBXSQLCOL {
    short          type;
    ydb_buffer_t   name;
+   char *         stype;
 } DBXSQLCOL, *PDBXSQLCOL;
 
 typedef struct tagDBXSQL {
