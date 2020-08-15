@@ -112,6 +112,11 @@ Version 2.1.18 12 August 2020:
    Attempt to capture Windows OS exceptions in the event log.
    - The default event log is c:\temp\mg-dbx.log under Windows and /tmp/mg-dbx.log under UNIX.
 
+Version 2.1.19 15 August 2020:
+   Update the internal UNIX library names for InterSystems IRIS and Cache.
+   - For information, the Cache library was renamed from libcache to libisccache and the IRIS library from libirisdb to libisciris.db
+   - This change does not affect Windows platforms.
+
 */
 
 
@@ -3701,6 +3706,7 @@ __try {
       }
    }
 
+   /* v2.1.19 */
    n = 0;
    if (pcon->dbtype == DBX_DBTYPE_IRIS) {
 #if defined(_WIN32)
@@ -3708,15 +3714,19 @@ __try {
       libnam[n ++] = (char *) DBX_CACHE_DLL;
 #else
 #if defined(MACOSX)
+      libnam[n ++] = (char *) DBX_ISCIRIS_DYLIB;
       libnam[n ++] = (char *) DBX_IRIS_DYLIB;
-      libnam[n ++] = (char *) DBX_IRIS_SO;
+      libnam[n ++] = (char *) DBX_ISCCACHE_DYLIB;
       libnam[n ++] = (char *) DBX_CACHE_DYLIB;
+      libnam[n ++] = (char *) DBX_ISCIRIS_SO;
+      libnam[n ++] = (char *) DBX_IRIS_SO;
+      libnam[n ++] = (char *) DBX_ISCCACHE_SO;
       libnam[n ++] = (char *) DBX_CACHE_SO;
 #else
+      libnam[n ++] = (char *) DBX_ISCIRIS_SO;
       libnam[n ++] = (char *) DBX_IRIS_SO;
-      libnam[n ++] = (char *) DBX_IRIS_DYLIB;
+      libnam[n ++] = (char *) DBX_ISCCACHE_SO;
       libnam[n ++] = (char *) DBX_CACHE_SO;
-      libnam[n ++] = (char *) DBX_CACHE_DYLIB;
 #endif
 #endif
    }
@@ -3726,15 +3736,19 @@ __try {
       libnam[n ++] = (char *) DBX_IRIS_DLL;
 #else
 #if defined(MACOSX)
+      libnam[n ++] = (char *) DBX_ISCCACHE_DYLIB;
       libnam[n ++] = (char *) DBX_CACHE_DYLIB;
-      libnam[n ++] = (char *) DBX_CACHE_SO;
+      libnam[n ++] = (char *) DBX_ISCIRIS_DYLIB;
       libnam[n ++] = (char *) DBX_IRIS_DYLIB;
+      libnam[n ++] = (char *) DBX_ISCCACHE_SO;
+      libnam[n ++] = (char *) DBX_CACHE_SO;
+      libnam[n ++] = (char *) DBX_ISCIRIS_SO;
       libnam[n ++] = (char *) DBX_IRIS_SO;
 #else
+      libnam[n ++] = (char *) DBX_ISCCACHE_SO;
       libnam[n ++] = (char *) DBX_CACHE_SO;
-      libnam[n ++] = (char *) DBX_CACHE_DYLIB;
+      libnam[n ++] = (char *) DBX_ISCIRIS_SO;
       libnam[n ++] = (char *) DBX_IRIS_SO;
-      libnam[n ++] = (char *) DBX_IRIS_DYLIB;
 #endif
 #endif
    }
@@ -5886,7 +5900,6 @@ __try {
       if (pcon->p_isc_so && no_connections == 0 && pcon->p_isc_so->multiple_connections == 0) { /* v2.0.16 */
 
          if (pcon->p_isc_so->loaded) {
-
             /* pcon->p_isc_so->p_CacheEnd(); */
             dbx_dso_unload(pcon->p_isc_so->p_library);
             pcon->p_isc_so->p_library = NULL;

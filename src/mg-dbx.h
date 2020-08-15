@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "2"
 #define DBX_VERSION_MINOR        "1"
-#define DBX_VERSION_BUILD        "18"
+#define DBX_VERSION_BUILD        "19"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -227,10 +227,15 @@ DISABLE_WCAST_FUNCTION_TYPE
 #define DBX_IRIS_DLL             "irisdb.dll"
 #define DBX_YDB_DLL              "yottadb.dll"
 #else
+/* v2.1.19 */
 #define DBX_CACHE_SO             "libcache.so"
 #define DBX_CACHE_DYLIB          "libcache.dylib"
+#define DBX_ISCCACHE_SO          "libisccache.so"
+#define DBX_ISCCACHE_DYLIB       "libisccache.dylib"
 #define DBX_IRIS_SO              "libirisdb.so"
 #define DBX_IRIS_DYLIB           "libirisdb.dylib"
+#define DBX_ISCIRIS_SO           "libiscirisdb.so"
+#define DBX_ISCIRIS_DYLIB        "libiscirisdb.dylib"
 #define DBX_YDB_SO               "libyottadb.so"
 #define DBX_YDB_DYLIB            "libyottadb.dylib"
 #endif
