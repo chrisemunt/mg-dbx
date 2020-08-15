@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-12 August 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+15 August 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v14.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -1104,3 +1104,8 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Attempt to capture Windows OS exceptions in the event log.
 	* The default event log is c:\temp\mg-dbx.log under Windows and /tmp/mg-dbx.log under UNIX.
 
+### v2.1.19 (15 August 2020)
+
+* Update the internal UNIX library names for InterSystems IRIS and Cache.
+	* For information, the Cache library was renamed from libcache to libisccache and the IRIS library from libirisdb to libiscirisdb
+	* This change does not affect Windows platforms.
