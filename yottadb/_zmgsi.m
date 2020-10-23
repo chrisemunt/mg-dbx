@@ -1,7 +1,7 @@
 %zmgsi ;(CM) Service Integration - Core Server
  ;
  ;  ----------------------------------------------------------------------------
- ;  | %zmgsi                                                                    |
+ ;  | %zmgsi                                                                   |
  ;  | Author: Chris Munt cmunt@mgateway.com, chris.e.munt@gmail.com            |
  ;  | Copyright (c) 2016-2020 M/Gateway Developments Ltd,                      |
  ;  | Surrey UK.                                                               |
@@ -9,8 +9,8 @@
  ;  |                                                                          |
  ;  | http://www.mgateway.com                                                  |
  ;  |                                                                          |
- ;  | Licensed under the Apache License, Version 2.0 (the "License"); you may  |
- ;  | not use this file except in compliance with the License.                 |
+ ;  | Licensed under the Apache License, Version 2.0 (the "License");          |
+ ;  | you may not use this file except in compliance with the License.         |
  ;  | You may obtain a copy of the License at                                  |
  ;  |                                                                          |
  ;  | http://www.apache.org/licenses/LICENSE-2.0                               |
@@ -40,10 +40,13 @@ eeestart ; start
  q
  ;
 stop(port) ; stop
- w !,"stopping mgsi ... "
- s pport=+$g(port)
+ w !,"Terminating the %zmgsi service ... "
+ s pport=+$g(port) i pport="" q
+ i 'pport s pport=7041
  d stop1(pport,1)
- w !!,"mgsi stopped",!
+stopx ; service should have terminated
+ k ^%zmgsi("server",pport)
+ w !!,"%zmgsi service terminated",!
  q
  ;
 stop1(port,context) ; stop daemon
