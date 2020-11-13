@@ -125,7 +125,7 @@ Finally, add the following lines to the interface file (**zmgsi.ci** in the exam
        sqldel: ydb_string_t * sqldel^%zmgsis(I:ydb_string_t*, I:ydb_string_t *)
        ifc_zmgsis: ydb_string_t * ifc^%zmgsis(I:ydb_string_t*, I:ydb_string_t *, I:ydb_string_t*)
 
-A copy of this file can be downloaded from the **mgsi** GitHub repository [here](https://github.com/chrisemunt/mgsi/unix)
+A copy of this file can be downloaded from the **mgsi** GitHub repository [here](https://github.com/chrisemunt/mgsi)
 
 ### Setting up the network service (for network based connectivity only)
 
@@ -172,7 +172,7 @@ Content:
             server          = /usr/local/lib/yottadb/r122/zmgsi_ydb
        }
 
-* Note: sample copies of **zmgsi\_xinetd** and **zmgsi\_ydb** are included in the **mgsi** GitHub repository in the   [/unix directory](https://github.com/chrisemunt/mgsi/unix).
+* Note: sample copies of **zmgsi\_xinetd** and **zmgsi\_ydb** are included in the **mgsi** GitHub repository in the   [/unix directory](https://github.com/chrisemunt/mgsi).
 
 Edit the services file:
 
