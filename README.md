@@ -3,9 +3,9 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-15 August 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+13 November 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* Verified to work with Node.js v8 to v14.
+* Verified to work with Node.js v8 to v15.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
@@ -69,7 +69,7 @@ The M support routines are required for:
 * Direct access to SQL (either via the API or via the network).
 * The Merge command under YottaDB (either via the API or via the network).
 
-Two M routines need to be installed (%zmgsi and %zmgsis).  These can be found in the GitHub source code repository ([https://github.com/chrisemunt/mg-dbx](https://github.com/chrisemunt/mg-dbx))
+Two M routines need to be installed (%zmgsi and %zmgsis).  These can be found in the **mgsi** GitHub source code repository ([https://github.com/chrisemunt/mgsi](https://github.com/chrisemunt/mgsi))
 
 
 #### Installation for InterSystems Cache/IRIS
@@ -85,7 +85,7 @@ Change to your development UCI and check the installation:
        do ^%zmgsi
 
        M/Gateway Developments Ltd - Service Integration Gateway
-       Version: 3.3; Revision 9 (17 June 2020)
+       Version: 3.6; Revision 15 (6 November 2020)
 
 
 #### Installation for YottaDB
@@ -114,7 +114,7 @@ Link all the **zmgsi** routines and check the installation:
        do ^%zmgsi
 
        M/Gateway Developments Ltd - Service Integration Gateway
-       Version: 3.3; Revision 9 (17 June 2020)
+       Version: 3.6; Revision 15 (6 November 2020)
 
 Note that the version of **zmgsi** is successfully displayed.
 
@@ -125,6 +125,7 @@ Finally, add the following lines to the interface file (**zmgsi.ci** in the exam
        sqldel: ydb_string_t * sqldel^%zmgsis(I:ydb_string_t*, I:ydb_string_t *)
        ifc_zmgsis: ydb_string_t * ifc^%zmgsis(I:ydb_string_t*, I:ydb_string_t *, I:ydb_string_t*)
 
+A copy of this file can be downloaded from the **mgsi** GitHub repository [here](https://github.com/chrisemunt/mgsi/unix)
 
 ### Setting up the network service (for network based connectivity only)
 
@@ -171,7 +172,7 @@ Content:
             server          = /usr/local/lib/yottadb/r122/zmgsi_ydb
        }
 
-* Note: sample copies of **zmgsi\_xinetd** and **zmgsi\_ydb** are included in the **/unix** directory.
+* Note: sample copies of **zmgsi\_xinetd** and **zmgsi\_ydb** are included in the **mgsi** GitHub repository in the   [/unix directory](https://github.com/chrisemunt/mgsi/unix).
 
 Edit the services file:
 
@@ -1109,3 +1110,9 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Update the internal UNIX library names for InterSystems IRIS and Cache.
 	* For information, the Cache library was renamed from libcache to libisccache and the IRIS library from libirisdb to libiscirisdb
 	* This change does not affect Windows platforms.
+
+### v2.1.19a (13 November 2020)
+
+* Verify that **mg-dbx** will build and work with Node.js v15.x.x.
+* Note that files that were previously held under the **/m**, **/yottadb**, and **/unix** directories are now available from the **mgsi** GitHub repository.  These files are common to a number of my Open Source projects.
+	*  [https://github.com/chrisemunt/mgsi](https://github.com/chrisemunt/mgsi)
