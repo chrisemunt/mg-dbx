@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-13 November 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+9 December 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v15.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -1116,3 +1116,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Verify that **mg-dbx** will build and work with Node.js v15.x.x.
 * Note that files that were previously held under the **/m**, **/yottadb**, and **/unix** directories are now available from the **mgsi** GitHub repository.  These files are common to a number of my Open Source projects.
 	*  [https://github.com/chrisemunt/mgsi](https://github.com/chrisemunt/mgsi)
+
+### v2.1.20 (9 December 2020)
+
+* Correct a fault that occasionally led to failures in network-based connectivity between **mg\-dbx** and DB Servers.
