@@ -117,6 +117,12 @@ Version 2.1.19 15 August 2020:
    - For information, the Cache library was renamed from libcache to libisccache and the IRIS library from libirisdb to libisciris.db
    - This change does not affect Windows platforms.
 
+Version 2.1.19a 13 November 2020:
+   Verify that mg-dbx will build and work with Node.js v15.x.x.
+
+Version 2.1.20 9 December 2020:
+   Correct a fault that led to failures in network-based connectivity between mg-dbx and DB Servers.
+
 */
 
 
@@ -3035,6 +3041,9 @@ DBXMETH * dbx_request_memory(DBXCON *pcon, short context)
    pmeth->done = 0;
    for (n = 0; n < DBX_MAXARGS; n ++) {
       pmeth->args[n].cvalue.pstr = NULL;
+      /* v2.1.20 */
+      pmeth->args[n].sort = DBX_DSORT_DATA;
+      pmeth->args[n].type = DBX_DTYPE_STR;
    }
 
    return pmeth;
@@ -4659,6 +4668,9 @@ __try {
          /* printf("\r\ncache_cleanup %d &zstr=%p; pstr=%p;", n, &(pcon->cargs[n].zstr), pcon->cargs[n].pstr); */
          pcon->p_isc_so->p_CacheExStrKill(&(pmeth->args[n].cvalue.zstr));
          pmeth->args[n].cvalue.pstr = NULL;
+         /* v2.1.20 */
+         pmeth->args[n].sort = DBX_DSORT_DATA;
+         pmeth->args[n].type = DBX_DTYPE_STR;
       }
    }
    return 1;
