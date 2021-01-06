@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-9 December 2020, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+6 January 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v15.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -69,16 +69,13 @@ The M support routines are required for:
 * Direct access to SQL (either via the API or via the network).
 * The Merge command under YottaDB (either via the API or via the network).
 
-Two M routines need to be installed (%zmgsi and %zmgsis).  These can be found in the **mgsi** GitHub source code repository ([https://github.com/chrisemunt/mgsi](https://github.com/chrisemunt/mgsi))
-
+Two M routines need to be installed (%zmgsi and %zmgsis).  These can be found in the *Service Integration Gateway* (**mgsi**) GitHub source code repository ([https://github.com/chrisemunt/mgsi](https://github.com/chrisemunt/mgsi)).  Note that it is not necessary to install the whole *Service Integration Gateway*, just the two M routines held in that repository.
 
 #### Installation for InterSystems Cache/IRIS
 
-For InterSystems IRIS and Cache, log in to the Manager UCI and install the **zmgsi** routines held in either **/m/zmgsi\_cache.xml** or **/m/zmgsi\_iris.xml** as appropriate.
+Log in to the %SYS Namespace and install the **zmgsi** routines held in **/isc/zmgsi\_isc.ro**.
 
-       do $system.OBJ.Load("/m/zmgsi_cache.xml","ck")
-
-Alternatively, for other M systems, log in to the Manager UCI and, using the %RI utility (or similar) load the **zmgsi** routines held in **/m/zmgsi.ro**.
+       do $system.OBJ.Load("/isc/zmgsi_isc.ro","ck")
 
 Change to your development UCI and check the installation:
 
@@ -90,21 +87,21 @@ Change to your development UCI and check the installation:
 
 #### Installation for YottaDB
 
-The instructions given here assume a standard 'out of the box' installation of **YottaDB** deployed in the following location:
+The instructions given here assume a standard 'out of the box' installation of **YottaDB** (version 1.30) deployed in the following location:
 
-       /usr/local/lib/yottadb/r122
+       /usr/local/lib/yottadb/r130
 
 The primary default location for routines:
 
-       /root/.yottadb/r1.22_x86_64/r
+       /root/.yottadb/r1.30_x86_64/r
 
 Copy all the routines (i.e. all files with an 'm' extension) held in the GitHub **/yottadb** directory to:
 
-       /root/.yottadb/r1.22_x86_64/r
+       /root/.yottadb/r1.30_x86_64/r
 
 Change directory to the following location and start a **YottaDB** command shell:
 
-       cd /usr/local/lib/yottadb/r122
+       cd /usr/local/lib/yottadb/r130
        ./ydb
 
 Link all the **zmgsi** routines and check the installation:
@@ -143,16 +140,16 @@ To use a server TCP port other than 7041, specify it in the start-up command (as
 
 Network connectivity to **YottaDB** is managed via the **xinetd** service.  First create the following launch script (called **zmgsi\_ydb** here):
 
-       /usr/local/lib/yottadb/r122/zmgsi_ydb
+       /usr/local/lib/yottadb/r130/zmgsi_ydb
 
 Content:
 
        #!/bin/bash
-       cd /usr/local/lib/yottadb/r122
+       cd /usr/local/lib/yottadb/r130
        export ydb_dir=/root/.yottadb
-       export ydb_dist=/usr/local/lib/yottadb/r122
-       export ydb_routines="/root/.yottadb/r1.22_x86_64/o*(/root/.yottadb/r1.22_x86_64/r /root/.yottadb/r) /usr/local/lib/yottadb/r122/libyottadbutil.so"
-       export ydb_gbldir="/root/.yottadb/r1.22_x86_64/g/yottadb.gld"
+       export ydb_dist=/usr/local/lib/yottadb/r130
+       export ydb_routines="/root/.yottadb/r1.30_x86_64/o*(/root/.yottadb/r1.30_x86_64/r /root/.yottadb/r) /usr/local/lib/yottadb/r130/libyottadbutil.so"
+       export ydb_gbldir="/root/.yottadb/r1.30_x86_64/g/yottadb.gld"
        $ydb_dist/ydb -r xinetd^%zmgsis
 
 Create the **xinetd** script (called **zmgsi\_xinetd** here): 
@@ -169,7 +166,7 @@ Content:
             socket_type     = stream
             wait            = no
             user            = root
-            server          = /usr/local/lib/yottadb/r122/zmgsi_ydb
+            server          = /usr/local/lib/yottadb/r130/zmgsi_ydb
        }
 
 * Note: sample copies of **zmgsi\_xinetd** and **zmgsi\_ydb** are included in the **/unix** directory of the **mgsi** GitHub repository [here](https://github.com/chrisemunt/mgsi).
@@ -269,19 +266,19 @@ Assuming IRIS is accessed via **localhost** listening on TCP port **7041**
 
 ##### API based connectivity
 
-Assuming an 'out of the box' YottaDB installation under **/usr/local/lib/yottadb/r122**.
+Assuming an 'out of the box' YottaDB installation under **/usr/local/lib/yottadb/r130**.
 
            var envvars = "";
            envvars = envvars + "ydb_dir=/root/.yottadb\n"
-           envvars = envvars + "ydb_rel=r1.22_x86_64\n"
-           envvars = envvars + "ydb_gbldir=/root/.yottadb/r1.22_x86_64/g/yottadb.gld\n"
-           envvars = envvars + "ydb_routines=/root/.yottadb/r1.22_x86_64/o*(/root/.yottadb/r1.22_x86_64/r /root/.yottadb/r) /usr/local/lib/yottadb/r122/libyottadbutil.so\n"
-           envvars = envvars + "ydb_ci=/usr/local/lib/yottadb/r122/zmgsi.ci\n"
+           envvars = envvars + "ydb_rel=r1.30_x86_64\n"
+           envvars = envvars + "ydb_gbldir=/root/.yottadb/r1.30_x86_64/g/yottadb.gld\n"
+           envvars = envvars + "ydb_routines=/root/.yottadb/r1.30_x86_64/o*(/root/.yottadb/r1.30_x86_64/r /root/.yottadb/r) /usr/local/lib/yottadb/r130/libyottadbutil.so\n"
+           envvars = envvars + "ydb_ci=/usr/local/lib/yottadb/r130/zmgsi.ci\n"
            envvars = envvars + "\n"
 
            var open = db.open({
                type: "YottaDB",
-               path: "/usr/local/lib/yottadb/r122",
+               path: "/usr/local/lib/yottadb/r130",
                env_vars: envvars
              });
 
@@ -298,7 +295,12 @@ Assuming YottaDB is accessed via **localhost** listening on TCP port **7041**
 
 #### Additional (optional) properties for the open() method
 
-* **multithreaded**: A boolean value to be set to 'true' or 'false' (default **multithreaded: false**).  Set this property to 'true' if the application uses multithreaded techniques in JavaScript (e.g. V8 worker threads).
+* **multithreaded**: A boolean value to be set to 'true' or 'false' (default: **multithreaded: true**).  Set this property to 'true' if the application uses multithreaded techniques in JavaScript (e.g. V8 worker threads).
+
+* **timeout**: The timeout (in seconds) to be applied to database operations invoked via network based connections.  The default value is 10 seconds.
+
+* **dberror_exceptions**: A boolean value to be set to 'true' or 'false' (default: **dberror_exceptions: false**).  Set this property to 'true' to instruct **mg\-dbx** to throw Node.js exceptions if synchronous invocation of database operations result in an error condition.  If this property is not set, any error condition resulting from the previous database operation can be retrieved using the **db.geterrormessage()** method.
+
 
 ### Return the version of mg-dbx
 
@@ -342,6 +344,24 @@ Example 2 (Change the current character set):
 
 * If the operation is successful this method will echo back the new character set name.  If not successful, the method will return the name of the current (unchanged) character set.
 * Currently supported character sets and encoding schemes: 'ascii' and 'utf-8'.
+
+
+### Setting (or resetting) the timeout for the connection
+
+       new_timeout = db.settimeout(<new_timeout>);
+
+Specify a new timeout value (in seconds) for the connection.  If the operation is successful this method will return the new value for the timeout.
+
+Example (Set the timeout to 30 seconds): 
+
+       var new_timeout = db.settimeout(30);
+
+
+### Get the error message associated with the previous database operation
+
+       error_message = db.geterrormessage();
+
+This method will return the error message (as a string) associated with the previous database operation.  An empty string will be returned if the previous operation completed successfully.
 
 
 ### Close database connection
@@ -987,7 +1007,7 @@ Logging can be switched off by calling the **setloglevel** function without spec
 
 ## <a name="License"></a> License
 
-Copyright (c) 2018-2020 M/Gateway Developments Ltd,
+Copyright (c) 2018-2021 M/Gateway Developments Ltd,
 Surrey UK.                                                      
 All rights reserved.
  
@@ -1034,7 +1054,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v1.3.8 (14 November 2019)
 
 * Correct a fault in the Global Increment method.
-* Correct a fault that resulted in query.next() and query.previous() loops not terminating properly (with null) under YottaDB.  This fault affected YottaDB releases after 1.22
+* Correct a fault that resulted in query.next() and query.previous() loops not terminating properly (with null) under YottaDB.  This fault affected YottaDB releases after 1.30
 * Modify the version() method so that it returns the version of YottaDB rather than the version of the underlying GT.M engine.
 
 ### v1.3.9 (26 February 2020)
@@ -1120,3 +1140,13 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v2.1.20 (9 December 2020)
 
 * Correct a fault that occasionally led to failures in network-based connectivity between **mg\-dbx** and DB Servers.
+
+### v2.2.21 (6 January 2021)
+
+* Allow a DB Server response timeout to be set for network based connectivity.
+	* Specify the **timeout** property in the open() method.
+	* Use the **db.settimeout()** method to set or reset the timeout value.
+* Introduce an option to throw Node.js exceptions if synchronous calls to database operations result in an error condition (for example an M "SUBSCRIPT" or "SYNTAX" error).
+	* Specify the **dberror_exceptions** property in the **open()** method (default is **false**). 
+* Introduce a method to return any error message associated with the previous database operation.
+	* **var errormessage = db.geterrormessage()**
