@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2020 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2021 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -147,9 +147,12 @@ void mclass::New(const FunctionCallbackInfo<Value>& args)
                }
                if (rc != CACHE_SUCCESS) {
                   dbx_error_message(pmeth, rc);
+                  if (pcon->error_mode == 1) { /* v2.2.21 */
+                     isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+                  }
                }
                DBX_DBFUN_END(c);
-               DBX_DB_UNLOCK(rc);
+               DBX_DB_UNLOCK();
                if (pmeth->output_val.type == DBX_DTYPE_OREF) {
                   obj->oref =  pmeth->output_val.num.oref;
                }
@@ -295,10 +298,13 @@ void mclass::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int binary)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pmeth->output_val.type != DBX_DTYPE_OREF) {
       if (binary) {
@@ -313,9 +319,9 @@ void mclass::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int binary)
       return;
    }
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
    mclass *clx1 = mclass::NewInstance(args);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    clx1->c = c;
    clx1->oref =  pmeth->output_val.num.oref;
@@ -401,7 +407,6 @@ void mclass::MethodEx(const FunctionCallbackInfo<Value>& args, int binary)
       rc = dbx_method(pmeth);
    }
    else {
-
       rc = pcon->p_isc_so->p_CacheInvokeMethod(pmeth->cargc - 2);
       if (rc == CACHE_SUCCESS) {
          rc = isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
@@ -410,10 +415,13 @@ void mclass::MethodEx(const FunctionCallbackInfo<Value>& args, int binary)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pmeth->output_val.type != DBX_DTYPE_OREF) {
       if (binary) {
@@ -428,9 +436,9 @@ void mclass::MethodEx(const FunctionCallbackInfo<Value>& args, int binary)
       return;
    }
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
    mclass *clx1 = mclass::NewInstance(args);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    clx1->c = c;
    clx1->oref =  pmeth->output_val.num.oref;
@@ -511,10 +519,13 @@ void mclass::SetProperty(const FunctionCallbackInfo<Value>& args)
    }
    else {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    str = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(str);
@@ -607,10 +618,13 @@ void mclass::GetPropertyEx(const FunctionCallbackInfo<Value>& args, int binary)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pmeth->output_val.type != DBX_DTYPE_OREF) {
       if (binary) {
@@ -627,9 +641,9 @@ void mclass::GetPropertyEx(const FunctionCallbackInfo<Value>& args, int binary)
 
    /* 2.0.14 */
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
    mclass *clx1 = mclass::NewInstance(args);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    clx1->c = c;
    clx1->oref =  pmeth->output_val.num.oref;
@@ -693,10 +707,13 @@ void mclass::Reset(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pmeth->output_val.type != DBX_DTYPE_OREF) {
       str = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);

@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2020 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2021 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -32,8 +32,8 @@
 #define DBX_NODE_VERSION         (NODE_MAJOR_VERSION * 10000) + (NODE_MINOR_VERSION * 100) + NODE_PATCH_VERSION
 
 #define DBX_VERSION_MAJOR        "2"
-#define DBX_VERSION_MINOR        "1"
-#define DBX_VERSION_BUILD        "20"
+#define DBX_VERSION_MINOR        "2"
+#define DBX_VERSION_BUILD        "21"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -142,7 +142,7 @@ DISABLE_WCAST_FUNCTION_TYPE
 #endif
 
 #define DBX_MAXARGS              64
-#define DBX_DEFAULT_TIMEOUT      30
+#define DBX_DEFAULT_TIMEOUT      10
 
 #define DBX_THREADPOOL_MAX       8
 
@@ -384,32 +384,46 @@ DISABLE_WCAST_FUNCTION_TYPE
 #if DBX_NODE_VERSION >= 120000
 
 #define DBX_DBFUN_START(C, PCON, PMETH) \
-   if (!C->open) { \
-      if (PCON && PCON->error[0]) { \
-         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, PCON->error, NewStringType::kNormal).ToLocalChecked())); \
-         dbx_request_memory_free(PCON, PMETH, 0); \
-         return; \
-      } \
-      else { \
-         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Database not open", NewStringType::kNormal).ToLocalChecked())); \
-         dbx_request_memory_free(PCON, PMETH, 0); \
-         return; \
+   if (!PCON) { \
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, (char *) "Database object not created", NewStringType::kNormal).ToLocalChecked())); \
+      dbx_request_memory_free(PCON, PMETH, 0); \
+      return; \
+   } \
+   else { \
+      if (!PCON->open) { \
+         if (PCON->error[0]) { \
+            isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, PCON->error, NewStringType::kNormal).ToLocalChecked())); \
+            dbx_request_memory_free(PCON, PMETH, 0); \
+            return; \
+         } \
+         else { \
+            isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, (char *) "Database not open", NewStringType::kNormal).ToLocalChecked())); \
+            dbx_request_memory_free(PCON, PMETH, 0); \
+            return; \
+         } \
       } \
    } \
 
 #else
 
 #define DBX_DBFUN_START(C, PCON, PMETH) \
-   if (!C->open) { \
-      if (PCON && PCON->error[0]) { \
-         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, PCON->error))); \
-         dbx_request_memory_free(PCON, PMETH, 0); \
-         return; \
-      } \
-      else { \
-         isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "Database not open"))); \
-         dbx_request_memory_free(PCON, PMETH, 0); \
-         return; \
+   if (!PCON) { \
+      isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, (char *) "Database object not created"))); \
+      dbx_request_memory_free(PCON, PMETH, 0); \
+      return; \
+   } \
+   else { \
+      if (!PCON->open) { \
+         if (PCON->error[0]) { \
+            isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, PCON->error))); \
+            dbx_request_memory_free(PCON, PMETH, 0); \
+            return; \
+         } \
+         else { \
+            isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, (char *) "Database not open"))); \
+            dbx_request_memory_free(PCON, PMETH, 0); \
+            return; \
+         } \
       } \
    } \
 
@@ -476,16 +490,25 @@ DISABLE_WCAST_FUNCTION_TYPE
 
 #define DBX_DBFUN_END(C)
 
-#define DBX_DB_LOCK(RC, TIMEOUT) \
+#define DBX_DB_LOCK(TIMEOUT) \
+   if (pcon->use_mutex) { \
+      dbx_mutex_lock(pcon->p_mutex, TIMEOUT); \
+   } \
+
+#define DBX_DB_LOCK_EX(RC, TIMEOUT) \
    if (pcon->use_mutex) { \
       RC = dbx_mutex_lock(pcon->p_mutex, TIMEOUT); \
    } \
 
-#define DBX_DB_UNLOCK(RC) \
+#define DBX_DB_UNLOCK() \
+   if (pcon->use_mutex) { \
+      dbx_mutex_unlock(pcon->p_mutex); \
+   } \
+
+#define DBX_DB_UNLOCK_EX(RC) \
    if (pcon->use_mutex) { \
       RC = dbx_mutex_unlock(pcon->p_mutex); \
    } \
-
 
 typedef void      async_rtn;
 
@@ -867,9 +890,11 @@ typedef struct tagDBXYDBSO {
 
 
 typedef struct tagDBXCON {
+   short          open;
    short          dbtype;
    short          utf8;
    short          use_mutex;
+   short          error_mode; /* v2.2.21 */
    char           type[64];
    char           path[256];
    char           username[64];
@@ -888,7 +913,6 @@ typedef struct tagDBXCON {
    short          net_connection;
    int            tcp_port;
    char           net_host[128];
-   int            error_no;
    int            timeout;
    int            eof;
    SOCKET         cli_socket;
@@ -925,8 +949,6 @@ typedef struct tagDBXMETH {
    DBXSQL         *psql;
    int            (* p_dbxfun) (struct tagDBXMETH * pmeth);
    DBXCON         *pcon;
-   int            error_code;
-   char           error[DBX_ERROR_SIZE];
 } DBXMETH, *PDBXMETH;
 
 
@@ -957,7 +979,6 @@ public:
 
    int            dbx_count;
    int            counter;
-   short          open;
    short          use_mutex;
    short          handle_sigint;
    short          handle_sigterm;
@@ -1008,6 +1029,8 @@ public:
    static void                   About                            (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Version                          (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   SetLogLevel                      (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   SetTimeout                       (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   GetErrorMessage                  (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   LogMessage                       (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Charset                          (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Open                             (const v8::FunctionCallbackInfo<v8::Value>& args);

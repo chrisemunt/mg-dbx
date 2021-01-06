@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2020 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2021 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -122,6 +122,15 @@ Version 2.1.19a 13 November 2020:
 
 Version 2.1.20 9 December 2020:
    Correct a fault that led to failures in network-based connectivity between mg-dbx and DB Servers.
+
+Version 2.2.21 6 January 2021:
+   Allow a DB Server response timeout to be set for network based connectivity.
+	- Specify the 'timeout' property in the open() method.
+	- Use the 'db.settimeout()' method to set or reset the timeout value.
+   Introduce an option to throw Node.js exceptions if synchronous calls to database operations result in an error condition (for example an M 'SUBSCRIPT' or 'SYNTAX' error).
+	- Specify the 'dberror_exceptions' property in the 'open()' method (default is 'false').
+   Introduce a method to return any error message associated with the previous database operation.
+	- var errormessage = db.geterrormessage()
 
 */
 
@@ -242,6 +251,8 @@ void DBX_DBNAME::Init(Handle<Object> exports)
 
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "version", Version);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "setloglevel", SetLogLevel);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "settimeout", SetTimeout);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "geterrormessage", GetErrorMessage);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "logmessage", LogMessage);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "charset", Charset);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "open", Open);
@@ -312,8 +323,6 @@ void DBX_DBNAME::New(const FunctionCallbackInfo<Value>& args)
    dbx_counter ++;
    dbx_leave_critical_section((void *) &dbx_async_mutex);
 
-   c->open = 0;
-
    c->csize = 8;
 
    c->pcon = NULL;
@@ -329,6 +338,7 @@ void DBX_DBNAME::New(const FunctionCallbackInfo<Value>& args)
    c->pcon = (DBXCON *) dbx_malloc(sizeof(DBXCON), 0);
    memset((void *) c->pcon, 0, sizeof(DBXCON));
 
+   c->pcon->open = 0;
    c->pcon->p_mutex = &mutex_global;
    c->pcon->p_zv = NULL;
 
@@ -343,6 +353,13 @@ void DBX_DBNAME::New(const FunctionCallbackInfo<Value>& args)
    c->pcon->use_mutex = 1; /* v2.1.17 */
    c->pcon->p_isc_so = NULL;
    c->pcon->p_ydb_so = NULL;
+
+   /* v2.2.21 */
+   c->pcon->error[0] = '\0';
+   c->pcon->error_code = 0;
+   c->pcon->error_mode = 0;
+
+   c->pcon->timeout = DBX_DEFAULT_TIMEOUT;
 
    c->pcon->log_errors = 0;
    c->pcon->log_functions = 0;
@@ -671,6 +688,60 @@ void DBX_DBNAME::SetLogLevel(const FunctionCallbackInfo<Value>& args)
 }
 
 
+/* v2.2.21 */
+void DBX_DBNAME::SetTimeout(const FunctionCallbackInfo<Value>& args)
+{
+   int js_narg;
+   DBXCON *pcon;
+   Local<Number> result;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   DBX_GET_ICONTEXT;
+   c->dbx_count ++;
+
+   pcon = c->pcon;
+
+   js_narg = args.Length();
+
+   if (js_narg != 1) {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The SetTimeout method takes one argument", 1)));
+      return;
+   }
+
+   if (args[0]->IsInt32()) {
+      pcon->timeout = (int) DBX_INT32_VALUE(args[0]);
+      if (pcon->timeout < 3) {
+         pcon->timeout = 10;
+      }
+   }
+   else {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The SetTimeout method takes one integer argument", 1)));
+   }
+
+   result = DBX_NUMBER_NEW(pcon->timeout);
+   args.GetReturnValue().Set(result);
+
+   return;
+}
+
+
+/* v2.2.21 */
+void DBX_DBNAME::GetErrorMessage(const FunctionCallbackInfo<Value>& args)
+{
+   DBXCON *pcon;
+   Local<String> result;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   DBX_GET_ISOLATE;
+   c->dbx_count ++;
+
+   pcon = c->pcon;
+
+   result = dbx_new_string8(isolate, (char *) pcon->error, pcon->utf8);
+   args.GetReturnValue().Set(result);
+
+   return;
+}
+
+
 void DBX_DBNAME::LogMessage(const FunctionCallbackInfo<Value>& args)
 {
   int js_narg, str_len;
@@ -814,7 +885,7 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
       return;
    }
 
-   if (c->open) {
+   if (pcon->open) {
       Local<String> result = dbx_new_string8(isolate, (char *) "", 0);
       args.GetReturnValue().Set(result);
    }
@@ -865,6 +936,9 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
       else if (!strcmp(name, (char *) "tcp_port")) {
          pcon->tcp_port = DBX_INT32_VALUE(DBX_GET(obj, key));
       }
+      else if (!strcmp(name, (char *) "timeout")) { /* v2.2.21 */
+         pcon->timeout = DBX_INT32_VALUE(DBX_GET(obj, key));
+      }
       else if (!strcmp(name, (char *) "username")) {
          value = DBX_TO_STRING(DBX_GET(obj, key));
          DBX_WRITE_UTF8(value, pcon->username);
@@ -909,6 +983,13 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
                break;
             }
             p = p2 + 1;
+         }
+      }
+      else if (!strcmp(name, (char *) "dberror_exceptions")) { /* v2.2.21 */
+        if (DBX_GET(obj, key)->IsBoolean()) {
+            if (DBX_TO_BOOLEAN(DBX_GET(obj, key))->IsTrue()) {
+               pcon->error_mode = 1;
+            }
          }
       }
       else if (!strcmp(name, (char *) "multithreaded")) {
@@ -979,7 +1060,7 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
 
       rc = dbx_open(pmeth);
       if (rc == CACHE_SUCCESS) {
-         c->open = 1;
+         pcon->open = 1;
       }
 
       Local<Function> cb = Local<Function>::Cast(args[js_narg]);
@@ -1002,7 +1083,7 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
    rc = dbx_open(pmeth);
 
    if (rc == CACHE_SUCCESS) {
-      c->open = 1; 
+      pcon->open = 1; 
    }
 
    Local<String> result = dbx_new_string8(isolate, pcon->error, 0);
@@ -1030,7 +1111,7 @@ void DBX_DBNAME::Close(const FunctionCallbackInfo<Value>& args)
 
    DBX_DBFUN_START(c, pcon, pmeth);
 
-   c->open = 0;
+   pcon->open = 0;
 
    DBX_CALLBACK_FUN(js_narg, cb, async);
 
@@ -1139,10 +1220,13 @@ void DBX_DBNAME::Namespace(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    dbx_request_memory_free(pcon, pmeth, 0);
@@ -1226,7 +1310,7 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
    rc = 0;
 
    if (!context) {
-      DBX_DB_LOCK(rc, 0);
+      DBX_DB_LOCK(0);
    }
 
    pmeth->output_val.svalue.len_used = 0;
@@ -1436,10 +1520,13 @@ void DBX_DBNAME::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
    }
    else if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (binary) {
       Local<Object> bx = node::Buffer::New(isolate, (char *) pmeth->output_val.svalue.buf_addr, (size_t) pmeth->output_val.svalue.len_used).ToLocalChecked();
@@ -1526,10 +1613,13 @@ void DBX_DBNAME::Set(const FunctionCallbackInfo<Value>& args)
    }
    else {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -1612,10 +1702,13 @@ void DBX_DBNAME::Defined(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -1696,10 +1789,13 @@ void DBX_DBNAME::Delete(const FunctionCallbackInfo<Value>& args)
    }
    else {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -1779,10 +1875,13 @@ void DBX_DBNAME::Next(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -1862,10 +1961,13 @@ void DBX_DBNAME::Previous(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
 
@@ -1947,10 +2049,13 @@ void DBX_DBNAME::Increment(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -2060,10 +2165,13 @@ void DBX_DBNAME::Lock(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -2153,10 +2261,13 @@ void DBX_DBNAME::Unlock(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -2337,7 +2448,7 @@ int DBX_DBNAME::ExtFunctionReference(DBX_DBNAME *c, const FunctionCallbackInfo<V
    rc = 0;
 
    if (!context) {
-      DBX_DB_LOCK(rc, 0);
+      DBX_DB_LOCK(0);
    }
 
    pmeth->output_val.svalue.len_used = 0;
@@ -2493,10 +2604,13 @@ void DBX_DBNAME::ExtFunctionEx(const FunctionCallbackInfo<Value>& args, int bina
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (binary) {
       Local<Object> bx = node::Buffer::New(isolate, (char *) pmeth->output_val.svalue.buf_addr, (size_t) pmeth->output_val.svalue.len_used).ToLocalChecked();
@@ -2507,6 +2621,7 @@ void DBX_DBNAME::ExtFunctionEx(const FunctionCallbackInfo<Value>& args, int bina
       args.GetReturnValue().Set(result);
    }
    dbx_request_memory_free(pcon, pmeth, 0);
+
    return;
 }
 
@@ -2527,7 +2642,7 @@ int DBX_DBNAME::ClassReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>&
    rc = 0;
 
    if (!context) {
-      DBX_DB_LOCK(rc, 0);
+      DBX_DB_LOCK(0);
    }
 
    pmeth->output_val.svalue.len_used = 0;
@@ -2728,10 +2843,13 @@ void DBX_DBNAME::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int bina
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pmeth->output_val.type != DBX_DTYPE_OREF) {
       if (binary) {
@@ -2887,7 +3005,7 @@ void DBX_DBNAME::Benchmark(const FunctionCallbackInfo<Value>& args)
 /*
    dbx_enter_critical_section((void *) &dbx_async_mutex);
 */
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    for (n = 0; n < 10; n ++) {
       sprintf(buffer, "thread=%lu; line %d", (unsigned long) dbx_current_thread_id(), n);
@@ -2897,7 +3015,7 @@ void DBX_DBNAME::Benchmark(const FunctionCallbackInfo<Value>& args)
 /*
    dbx_leave_critical_section((void *) &dbx_async_mutex);
 */
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
 #else
    char ibuffer[256];
@@ -3045,6 +3163,10 @@ DBXMETH * dbx_request_memory(DBXCON *pcon, short context)
       pmeth->args[n].sort = DBX_DSORT_DATA;
       pmeth->args[n].type = DBX_DTYPE_STR;
    }
+
+   /* v2.2.21 */
+   pcon->error[0] = '\0';
+   pcon->error_code = 0;
 
    return pmeth;
 }
@@ -3505,9 +3627,9 @@ __try {
       }
 
       cx->psql = psql;
-      DBX_DB_LOCK(n, 0);
+      DBX_DB_LOCK(0);
       psql->sql_no = ++ dbx_sql_counter;
-      DBX_DB_UNLOCK(n);
+      DBX_DB_UNLOCK();
    
       cx->context = 11;
       cx->counter = 0;
@@ -4943,6 +5065,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
 int isc_error_message(DBXCON *pcon, int error_code)
 {
    int size, size1, len;
+   char *p;
    CACHE_ASTR *pcerror;
 
 #ifdef _WIN32
@@ -4976,36 +5099,34 @@ __try {
 
    size1 = size;
 
-      pcerror = (CACHE_ASTR *) dbx_malloc(sizeof(CACHE_ASTR), 801);
-      if (pcerror) {
-         pcerror->str[0] = '\0';
-         pcerror->len = 50;
-         pcon->p_isc_so->p_CacheErrxlateA(error_code, pcerror);
-         pcerror->str[50] = '\0';
+   pcerror = (CACHE_ASTR *) dbx_malloc(sizeof(CACHE_ASTR), 801);
+   if (pcerror) {
+      pcerror->str[0] = '\0';
+      pcerror->len = 50;
+      pcon->p_isc_so->p_CacheErrxlateA(error_code, pcerror);
+      pcerror->str[50] = '\0';
 
-         if (pcerror->len > 0) {
-            len = pcerror->len;
-            if (len >= DBX_ERROR_SIZE) {
-               len = DBX_ERROR_SIZE - 1;
-            }
-            T_STRNCPY(pcon->error, _dbxso(pcon->error), (char *) pcerror->str, len);
-            pcon->error[len] = '\0';
+      if (pcerror->len > 0) {
+         len = pcerror->len;
+         if (len >= DBX_ERROR_SIZE) {
+            len = DBX_ERROR_SIZE - 1;
          }
-         dbx_free((void *) pcerror, 801);
-         size1 -= (int) strlen(pcon->error);
+         T_STRNCPY(pcon->error, _dbxso(pcon->error), (char *) pcerror->str, len);
+         pcon->error[len] = '\0';
       }
- 
-   {
-      char *p;
-      p = (char *) isc_callin_message(pcon, error_code);
-      if (*p == '<') {
-         p = strstr(p, ">");
-         if (p) {
-            p ++;
-         }
+      dbx_free((void *) pcerror, 801);
+      size1 -= (int) strlen(pcon->error);
+   }
+
+   p = (char *) isc_callin_message(pcon, error_code);
+   if (*p == '<') {
+      p = strstr(p, ">");
+      if (p) {
+         p ++;
       }
-      if (p)
-         T_STRNCAT(pcon->error, _dbxso(pcon->error), p, size1 - 1);
+   }
+   if (p) {
+      T_STRNCAT(pcon->error, _dbxso(pcon->error), p, size1 - 1);
    }
 
    pcon->error[size - 1] = '\0';
@@ -5757,6 +5878,7 @@ __try {
          goto dbx_open_exit;
       }
       pcon->p_zv = &(pcon->zv);
+      pcon->open = 1;
 
       rc = netx_tcp_handshake(pcon, 0);
 
@@ -5969,7 +6091,7 @@ int dbx_namespace(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    *nspace = '\0';
    rc = 0;
@@ -6005,7 +6127,7 @@ __try {
       dbx_error_message(pmeth, rc);
    }
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    return 0;
 
@@ -6181,7 +6303,7 @@ int dbx_get(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       rc = netx_tcp_command(pmeth, DBX_CMND_GGET, 0);
@@ -6215,9 +6337,9 @@ __try {
 
 dbx_get_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6250,7 +6372,7 @@ int dbx_set(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       rc = netx_tcp_command(pmeth, DBX_CMND_GSET, 0);
@@ -6281,9 +6403,9 @@ __try {
 
 dbx_set_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6316,7 +6438,7 @@ int dbx_defined(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       rc = netx_tcp_command(pmeth, DBX_CMND_GDEFINED, 0);
@@ -6350,9 +6472,9 @@ __try {
 
 dbx_defined_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6386,7 +6508,7 @@ int dbx_delete(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       rc = netx_tcp_command(pmeth, DBX_CMND_GDELETE, 0);
@@ -6420,9 +6542,9 @@ __try {
 
 dbx_delete_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6455,7 +6577,7 @@ int dbx_next(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       rc = netx_tcp_command(pmeth, DBX_CMND_GNEXT, 0);
@@ -6485,9 +6607,9 @@ __try {
 
 dbx_next_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6520,7 +6642,7 @@ int dbx_previous(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       rc = netx_tcp_command(pmeth, DBX_CMND_GPREVIOUS, 0);
@@ -6550,9 +6672,9 @@ __try {
 
 dbx_previous_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6585,7 +6707,7 @@ int dbx_increment(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       rc = netx_tcp_command(pmeth, DBX_CMND_GINCREMENT, 0);
@@ -6616,9 +6738,9 @@ __try {
 
 dbx_increment_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6653,7 +6775,7 @@ int dbx_lock(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       rc = netx_tcp_command(pmeth, DBX_CMND_GLOCK, 0);
@@ -6712,9 +6834,9 @@ __try {
 
 dbx_lock_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6747,7 +6869,7 @@ int dbx_unlock(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       rc = netx_tcp_command(pmeth, DBX_CMND_GUNLOCK, 0);
@@ -6788,9 +6910,9 @@ __try {
 
 dbx_unlock_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6829,7 +6951,7 @@ int dbx_merge(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       rc = netx_tcp_command(pmeth, DBX_CMND_GMERGE, 0);
@@ -6987,9 +7109,9 @@ __try {
 
 dbx_merge_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -7082,7 +7204,7 @@ int dbx_function(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       rc = netx_tcp_command(pmeth, DBX_CMND_FUNCTION, 0);
@@ -7113,9 +7235,9 @@ __try {
 
 dbx_function_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -7207,7 +7329,7 @@ int dbx_classmethod(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       rc = netx_tcp_command(pmeth, DBX_CMND_CCMETH, 0);
@@ -7234,9 +7356,9 @@ __try {
 
 dbx_classmethod_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -7269,7 +7391,7 @@ int dbx_method(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       rc = netx_tcp_command(pmeth, DBX_CMND_CMETH, 0);
@@ -7296,9 +7418,9 @@ __try {
 
 dbx_method_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -7331,7 +7453,7 @@ int dbx_setproperty(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       rc = netx_tcp_command(pmeth, DBX_CMND_CSETP, 0);
@@ -7358,9 +7480,9 @@ __try {
 
 dbx_setproperty_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -7393,7 +7515,7 @@ int dbx_getproperty(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       rc = netx_tcp_command(pmeth, DBX_CMND_CGETP, 0);
@@ -7420,9 +7542,9 @@ __try {
 
 dbx_getproperty_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -7505,7 +7627,7 @@ __try {
       pmeth->ibuffer_used = 0;
    }
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       int nx;
@@ -7558,7 +7680,7 @@ __try {
       isc_cleanup(pmeth);
    }
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (rc != CACHE_SUCCESS) {
       pmeth->psql->sqlcode = -1;
@@ -7618,7 +7740,7 @@ __try {
 
 dbx_sql_execute_exit:
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -7697,7 +7819,7 @@ __try {
       pmeth->ibuffer_used = 0;
    }
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       int nx;
@@ -7752,7 +7874,7 @@ __try {
       isc_cleanup(pmeth);
    }
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (rc != CACHE_SUCCESS) {
       eod = 1;
@@ -7869,7 +7991,7 @@ __try {
    }
 
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    if (pcon->net_connection) {
       int nx;
@@ -7918,7 +8040,7 @@ __try {
       isc_cleanup(pmeth);
    }
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    for (n = 0; n < pmeth->psql->no_cols; n ++) {
       if (pmeth->psql->cols[n]) {
@@ -9397,7 +9519,10 @@ int dbx_error_message(DBXMETH *pmeth, int error_code)
    DBXCON *pcon = pmeth->pcon;
 
    rc = 0;
-   if (pcon->net_connection) {
+   if (pcon->error[0]) { /* v2.2.21 */
+      pcon->error_code = error_code;
+   }
+   else if (pcon->net_connection) {
       if (!pcon->error[0]) {
          if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
             rc = ydb_error(pcon, error_code);
@@ -9412,6 +9537,10 @@ int dbx_error_message(DBXMETH *pmeth, int error_code)
    }
    else {
       rc = isc_error_message(pcon, error_code);
+   }
+
+   if (pcon->error_code == 0) {
+      pcon->error_code = error_code;
    }
 
    if (pcon->log_errors) {

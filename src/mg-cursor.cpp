@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2020 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2021 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -391,12 +391,12 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
       }
 
       DBX_DBFUN_START(c, pcon, pmeth);
-      DBX_DB_LOCK(n, 0);
+      DBX_DB_LOCK(0);
 
       eod = dbx_global_order(pmeth, cx->pqr_prev, 1, cx->getdata);
 
       DBX_DBFUN_END(c);
-      DBX_DB_UNLOCK(n);
+      DBX_DB_UNLOCK();
 
       if (cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used == 0) {
          args.GetReturnValue().Set(DBX_NULL());
@@ -440,12 +440,12 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
    else if (cx->context == 2) {
    
       DBX_DBFUN_START(c, pcon, pmeth);
-      DBX_DB_LOCK(n, 0);
+      DBX_DB_LOCK(0);
 
       eod = dbx_global_query(pmeth, cx->pqr_next, cx->pqr_prev, 1, cx->getdata);
 
       DBX_DBFUN_END(c);
-      DBX_DB_UNLOCK(n);
+      DBX_DB_UNLOCK();
 
       if (cx->format == 1) {
          char buffer[32], delim[4];
@@ -502,12 +502,12 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
 
       /* v2.1.18 */
       DBX_DBFUN_START(c, pcon, pmeth);
-      DBX_DB_LOCK(n, 0);
+      DBX_DB_LOCK(0);
 
       eod = dbx_global_directory(pmeth, cx->pqr_prev, 1, &(cx->counter));
 
       DBX_DBFUN_END(c);
-      DBX_DB_UNLOCK(n);
+      DBX_DB_UNLOCK();
 
       if (eod) {
          args.GetReturnValue().Set(DBX_NULL());
@@ -606,12 +606,12 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
       }
 
       DBX_DBFUN_START(c, pcon, pmeth);
-      DBX_DB_LOCK(n, 0);
+      DBX_DB_LOCK(0);
 
       eod = dbx_global_order(pmeth, cx->pqr_prev, -1, cx->getdata);
 
       DBX_DBFUN_END(c);
-      DBX_DB_UNLOCK(n);
+      DBX_DB_UNLOCK();
 
       if (cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used == 0) {
          args.GetReturnValue().Set(DBX_NULL());
@@ -644,12 +644,12 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
    else if (cx->context == 2) {
    
       DBX_DBFUN_START(c, pcon, pmeth);
-      DBX_DB_LOCK(n, 0);
+      DBX_DB_LOCK(0);
 
       eod = dbx_global_query(pmeth, cx->pqr_next, cx->pqr_prev, -1, cx->getdata);
 
       DBX_DBFUN_END(c);
-      DBX_DB_UNLOCK(n);
+      DBX_DB_UNLOCK();
 
       if (cx->format == 1) {
          char buffer[32], delim[4];
@@ -708,12 +708,12 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
    
       /* v2.1.18 */
       DBX_DBFUN_START(c, pcon, pmeth);
-      DBX_DB_LOCK(n, 0);
+      DBX_DB_LOCK(0);
 
       eod = dbx_global_directory(pmeth, cx->pqr_prev, -1, &(cx->counter));
 
       DBX_DBFUN_END(c);
-      DBX_DB_UNLOCK(n);
+      DBX_DB_UNLOCK();
 
       if (eod) {
          args.GetReturnValue().Set(DBX_NULL());

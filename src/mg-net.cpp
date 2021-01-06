@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2020 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2021 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -286,8 +286,8 @@ int netx_tcp_connect(DBXCON *pcon, int context)
    struct hostent *hp;
    struct in_addr **pptr;
 
-   pcon->net_connection = 0;
-   pcon->error_no = 0;
+   pcon->open = 0;
+   pcon->error_code = 0;
    connected = 0;
    getaddrinfo_ok = 0;
    spin_count = 0;
@@ -331,7 +331,7 @@ int netx_tcp_connect(DBXCON *pcon, int context)
       res = NULL;
       sprintf(port_str, "%d", pcon->tcp_port);
       connected = 0;
-      pcon->error_no = 0;
+      pcon->error_code = 0;
 
       for (mode = 0; mode < 3; mode ++) {
 
@@ -392,16 +392,16 @@ int netx_tcp_connect(DBXCON *pcon, int context)
 
             }
 
-            pcon->error_no = 0;
+            pcon->error_code = 0;
             n = netx_tcp_connect_ex(pcon, (xLPSOCKADDR) ai->ai_addr, (socklen_netx) (ai->ai_addrlen), pcon->timeout);
             if (n == -2) {
-               pcon->error_no = n;
+               pcon->error_code = n;
                n = -737;
                continue;
             }
             if (SOCK_ERROR(n)) {
                errorno = (int) netx_get_last_error(0);
-               pcon->error_no = errorno;
+               pcon->error_code = errorno;
                netx_tcp_disconnect(pcon, 0);
                continue;
             }
@@ -414,10 +414,10 @@ int netx_tcp_connect(DBXCON *pcon, int context)
             break;
       }
 
-      if (pcon->error_no) {
+      if (pcon->error_code) {
          char message[256];
-         netx_get_error_message(pcon->error_no, message, 250, 0);
-         sprintf(pcon->error, "Connection Error: Cannot Connect to Server (%s:%d): Error Code: %d (%s)", (char *) pcon->net_host, pcon->tcp_port, pcon->error_no, message);
+         netx_get_error_message(pcon->error_code, message, 250, 0);
+         sprintf(pcon->error, "Connection Error: Cannot Connect to Server (%s:%d): Error Code: %d (%s)", (char *) pcon->net_host, pcon->tcp_port, pcon->error_code, message);
          n = -5;
       }
 
@@ -430,7 +430,6 @@ int netx_tcp_connect(DBXCON *pcon, int context)
 
    if (ipv6) {
       if (connected) {
-         pcon->net_connection = 1;
          return 0;
       }
       else {
@@ -546,7 +545,7 @@ int netx_tcp_connect(DBXCON *pcon, int context)
          n = netx_tcp_connect_ex(pcon, (xLPSOCKADDR) &srv_addr, sizeof(srv_addr), pcon->timeout);
 
          if (n == -2) {
-            pcon->error_no = n;
+            pcon->error_code = n;
             n = -737;
 
             continue;
@@ -558,7 +557,7 @@ int netx_tcp_connect(DBXCON *pcon, int context)
             errorno = (int) netx_get_last_error(0);
             netx_get_error_message(errorno, message, 250, 0);
 
-            pcon->error_no = errorno;
+            pcon->error_code = errorno;
             sprintf(pcon->error, "Connection Error: Cannot Connect to Server (%s:%d): Error Code: %d (%s)", (char *) pcon->net_host, pcon->tcp_port, errorno, message);
             n = -5;
             netx_tcp_disconnect(pcon, 0);
@@ -638,7 +637,7 @@ int netx_tcp_connect(DBXCON *pcon, int context)
 
       n = netx_tcp_connect_ex(pcon, (xLPSOCKADDR) &srv_addr, sizeof(srv_addr), pcon->timeout);
       if (n == -2) {
-         pcon->error_no = n;
+         pcon->error_code = n;
          n = -737;
 
          netx_tcp_disconnect(pcon, 0);
@@ -651,15 +650,13 @@ int netx_tcp_connect(DBXCON *pcon, int context)
 
          errorno = (int) netx_get_last_error(0);
          netx_get_error_message(errorno, message, 250, 0);
-         pcon->error_no = errorno;
+         pcon->error_code = errorno;
          sprintf(pcon->error, "Connection Error: Cannot Connect to Server (%s:%d): Error Code: %d (%s)", (char *) pcon->net_host, pcon->tcp_port, errorno, message);
          n = -5;
          netx_tcp_disconnect(pcon, 0);
          return n;
       }
    }
-
-   pcon->net_connection = 1;
 
    return 0;
 }
@@ -674,11 +671,11 @@ int netx_tcp_handshake(DBXCON *pcon, int context)
    len = (int) strlen(buffer);
 
    netx_tcp_write(pcon, (unsigned char *) buffer, len);
-   len = netx_tcp_read(pcon, (unsigned char *) buffer, 5, 10, 0);
+   len = netx_tcp_read(pcon, (unsigned char *) buffer, 5, DBX_DEFAULT_TIMEOUT, 0);
 
    len = dbx_get_size((unsigned char *) buffer);
  
-   netx_tcp_read(pcon, (unsigned char *) buffer, len, 10, 0);
+   netx_tcp_read(pcon, (unsigned char *) buffer, len, DBX_DEFAULT_TIMEOUT, 0);
    if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
       isc_parse_zv(buffer, pcon->p_zv);
       T_SPRINTF(pcon->p_zv->version, _dbxso(pcon->p_zv->version), "%d.%d build %d", pcon->p_zv->majorversion, pcon->p_zv->minorversion, pcon->p_zv->dbx_build);
@@ -717,14 +714,28 @@ int netx_tcp_command(DBXMETH *pmeth, int command, int context)
       dbx_buffer_dump(pcon, netbuf, netbuf_used, buffer, 8, 0);
    }
 */
-   netx_tcp_write(pcon, (unsigned char *) netbuf, netbuf_used);
-   netx_tcp_read(pcon, (unsigned char *) pmeth->output_val.svalue.buf_addr, 5, 10, 0);
+   rc = netx_tcp_write(pcon, (unsigned char *) netbuf, netbuf_used);
+   if (rc < 0) { /* v2.2.21 */
+      netx_tcp_disconnect(pcon, 0);
+      return rc;
+   }
+
+   rc = netx_tcp_read(pcon, (unsigned char *) pmeth->output_val.svalue.buf_addr, 5, pcon->timeout, 0);
    pmeth->output_val.svalue.buf_addr[5] = '\0';
+
+   if (rc < 0) { /* v2.2.21 */
+      netx_tcp_disconnect(pcon, 0);
+      return rc;
+   }
 
    len = dbx_get_block_size((unsigned char *) pmeth->output_val.svalue.buf_addr, 0, &(pmeth->output_val.sort), &(pmeth->output_val.type));
 
    if (len > 0) {
-      netx_tcp_read(pcon, (unsigned char *) pmeth->output_val.svalue.buf_addr, len, 10, 0);
+      rc = netx_tcp_read(pcon, (unsigned char *) pmeth->output_val.svalue.buf_addr, len, pcon->timeout, 0);
+      if (rc < 0) { /* v2.2.21 */
+         netx_tcp_disconnect(pcon, 0);
+         return rc;
+      }
    }
 
    if (pmeth->output_val.type == DBX_DTYPE_OREF) {
@@ -733,6 +744,7 @@ int netx_tcp_command(DBXMETH *pmeth, int command, int context)
       pmeth->output_val.num.int32 = pmeth->output_val.num.oref;
    }
 
+   rc = CACHE_SUCCESS;
    if (pmeth->output_val.sort == DBX_DSORT_ERROR) {
       rc = CACHE_FAILURE;
       if (len > 0) {
@@ -885,7 +897,7 @@ int netx_tcp_disconnect(DBXCON *pcon, int context)
 
    }
 
-   pcon->net_connection = 0;
+   pcon->open = 0;
 
    return 0;
 
@@ -900,7 +912,7 @@ int netx_tcp_write(DBXCON *pcon, unsigned char *data, int size)
 
    *errormessage = '\0';
 
-   if (pcon->net_connection == 0) {
+   if (pcon->open == 0) {
       strcpy(pcon->error, "TCP Write Error: Socket is Closed");
       return -1;
    }
@@ -989,13 +1001,13 @@ int netx_tcp_read(DBXCON *pcon, unsigned char *data, int size, int timeout, int 
       if (n < 1) {
          if (n == 0) {
             result = NETX_READ_EOF;
-            pcon->net_connection = 0;
+            pcon->open = 0;
             pcon->eof = 1;
          }
          else {
             result = NETX_READ_ERROR;
             len = 0;
-            pcon->net_connection = 0;
+            pcon->open = 0;
          }
          break;
       }

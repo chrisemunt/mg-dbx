@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2020 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2021 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -301,10 +301,13 @@ void mglobal::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
    }
    else if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
    
    if (binary) {
       Local<Object> bx = node::Buffer::New(isolate, (char *) pmeth->output_val.svalue.buf_addr, (size_t) pmeth->output_val.svalue.len_used).ToLocalChecked();
@@ -395,10 +398,13 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
    }
    else {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -482,10 +488,13 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -568,11 +577,14 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
    }
    else {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -654,10 +666,13 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -739,10 +754,13 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
 
@@ -826,10 +844,13 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -946,10 +967,13 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -1041,10 +1065,13 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -1212,6 +1239,9 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
    }
    else {
       dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
