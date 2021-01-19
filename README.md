@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-6 January 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+19 January 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v15.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -151,6 +151,10 @@ Content:
        export ydb_routines="/root/.yottadb/r1.30_x86_64/o*(/root/.yottadb/r1.30_x86_64/r /root/.yottadb/r) /usr/local/lib/yottadb/r130/libyottadbutil.so"
        export ydb_gbldir="/root/.yottadb/r1.30_x86_64/g/yottadb.gld"
        $ydb_dist/ydb -r xinetd^%zmgsis
+
+Note that you should, if necessary, modify the permissions on this file so that it is executable.  For example:
+
+       chmod a=rx /usr/local/lib/yottadb/r130/zmgsi_ydb
 
 Create the **xinetd** script (called **zmgsi\_xinetd** here): 
 
@@ -990,6 +994,7 @@ Where:
 	* **e** - Log error conditions.
 	* **f** - Log all **mg\-dbx** function calls (function name and arguments).
 	* **t** - Log the request data buffers to be transmitted from **mg\-dbx** to the DB Server.
+	* **r** - Log the request data buffers to be transmitted from **mg\-dbx\-bdb** to the DB Server and the corresponding response data.
 * **log\_filter**: A comma-separated list of functions that you wish the log directive to be active for. This should be left empty to activate the log for all functions.
 
 Examples:
@@ -1150,3 +1155,16 @@ Unless required by applicable law or agreed to in writing, software distributed 
 	* Specify the **dberror_exceptions** property in the **open()** method (default is **false**). 
 * Introduce a method to return any error message associated with the previous database operation.
 	* **var errormessage = db.geterrormessage()**
+
+### v2.2.22 (18 January 2021)
+
+* Extend the logging of request transmission data to include the corresponding response data.
+	* Include 'r' in the log level.  For example: db.setloglevel("MyLog.log", "eftr", "");
+* Correct a fault that occasionally led to failures when sending long strings (greater than 32K) to the DB Server.
+	* For example global.set('key1', 'key2', [string 2MB in length]);
+* Correct a fault that occasionally led to failures when returning long strings to Node.js from the DB Server.
+	* This fault only affected network based connectivity to the DB Server.  
+
+
+
+
