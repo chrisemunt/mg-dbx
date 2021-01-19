@@ -671,11 +671,11 @@ int netx_tcp_handshake(DBXCON *pcon, int context)
    len = (int) strlen(buffer);
 
    netx_tcp_write(pcon, (unsigned char *) buffer, len);
-   len = netx_tcp_read(pcon, (unsigned char *) buffer, 5, DBX_DEFAULT_TIMEOUT, 0);
+   len = netx_tcp_read(pcon, (unsigned char *) buffer, 5, DBX_DEFAULT_TIMEOUT, 1);
 
    len = dbx_get_size((unsigned char *) buffer);
  
-   netx_tcp_read(pcon, (unsigned char *) buffer, len, DBX_DEFAULT_TIMEOUT, 0);
+   netx_tcp_read(pcon, (unsigned char *) buffer, len, DBX_DEFAULT_TIMEOUT, 1);
    if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
       isc_parse_zv(buffer, pcon->p_zv);
       T_SPRINTF(pcon->p_zv->version, _dbxso(pcon->p_zv->version), "%d.%d build %d", pcon->p_zv->majorversion, pcon->p_zv->minorversion, pcon->p_zv->dbx_build);
@@ -696,6 +696,7 @@ int netx_tcp_command(DBXMETH *pmeth, int command, int context)
    int len, rc;
    unsigned int netbuf_used;
    unsigned char *netbuf;
+   char *p;
    DBXCON *pcon = pmeth->pcon;
 
    rc = CACHE_SUCCESS;
@@ -707,20 +708,22 @@ int netx_tcp_command(DBXMETH *pmeth, int command, int context)
    netbuf = (pmeth->ibuffer - DBX_IBUFFER_OFFSET);
    netbuf_used = (pmeth->ibuffer_used + DBX_IBUFFER_OFFSET);
    dbx_add_block_size(netbuf, 0, netbuf_used,  0, command);
+
 /*
    {
       char buffer[256];
       sprintf(buffer, "netx_tcp_command SEND cmnd=%d; size=%d; netbuf_used=%d;", command, pmeth->ibuffer_used, netbuf_used);
-      dbx_buffer_dump(pcon, netbuf, netbuf_used, buffer, 8, 0);
+      dbx_log_buffer(pcon, (char *) netbuf, (int) netbuf_used, buffer, 0);
    }
 */
+
    rc = netx_tcp_write(pcon, (unsigned char *) netbuf, netbuf_used);
    if (rc < 0) { /* v2.2.21 */
       netx_tcp_disconnect(pcon, 0);
       return rc;
    }
 
-   rc = netx_tcp_read(pcon, (unsigned char *) pmeth->output_val.svalue.buf_addr, 5, pcon->timeout, 0);
+   rc = netx_tcp_read(pcon, (unsigned char *) pmeth->output_val.svalue.buf_addr, 5, pcon->timeout, 1);
    pmeth->output_val.svalue.buf_addr[5] = '\0';
 
    if (rc < 0) { /* v2.2.21 */
@@ -730,8 +733,21 @@ int netx_tcp_command(DBXMETH *pmeth, int command, int context)
 
    len = dbx_get_block_size((unsigned char *) pmeth->output_val.svalue.buf_addr, 0, &(pmeth->output_val.sort), &(pmeth->output_val.type));
 
+   /* v2.2.22 */
+   if (len >= (int) pmeth->output_val.svalue.len_alloc) {
+      p = (char *) dbx_malloc(sizeof(char) * (len + 2), 301);
+
+      if (p) {
+         if (pmeth->output_val.svalue.buf_addr) {
+            dbx_free((void *) pmeth->output_val.svalue.buf_addr, 301);
+         }
+         pmeth->output_val.svalue.buf_addr = (char *) p;
+         pmeth->output_val.svalue.len_alloc = len;
+      }
+   }
+
    if (len > 0) {
-      rc = netx_tcp_read(pcon, (unsigned char *) pmeth->output_val.svalue.buf_addr, len, pcon->timeout, 0);
+      rc = netx_tcp_read(pcon, (unsigned char *) pmeth->output_val.svalue.buf_addr, len, pcon->timeout, 1);
       if (rc < 0) { /* v2.2.21 */
          netx_tcp_disconnect(pcon, 0);
          return rc;
@@ -757,7 +773,7 @@ int netx_tcp_command(DBXMETH *pmeth, int command, int context)
    {
       char buffer[256];
       sprintf(buffer, "netx_tcp_command RECV cmnd=%d; len=%d; sort=%d; type=%d; oref=%d; rc=%d; error=%s;", command, len, pmeth->output_val.sort, pmeth->output_val.type, pmeth->output_val.num.oref, rc, pcon->error);
-      dbx_buffer_dump(pcon, pmeth->output_val.svalue.buf_addr, len, buffer, 8, 0);
+      dbx_log_buffer(pcon, pmeth->output_val.svalue.buf_addr, len, buffer, 0);
    }
 */
    pmeth->output_val.svalue.len_used = len;

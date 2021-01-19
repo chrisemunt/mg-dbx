@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "2"
 #define DBX_VERSION_MINOR        "2"
-#define DBX_VERSION_BUILD        "21"
+#define DBX_VERSION_BUILD        "22"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -711,6 +711,7 @@ typedef struct tagDBXVAL {
       unsigned int   oref;
    } num;
    unsigned long  offs;
+   unsigned int   csize;
    ydb_buffer_t svalue;
    DBXCVAL cvalue;
    struct tagDBXVAL *pnext;
@@ -1029,6 +1030,7 @@ public:
    static void                   About                            (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Version                          (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   SetLogLevel                      (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static v8::Local<v8::String>  StringifyJSON                    (DBX_DBNAME *c, v8::Local<v8::Object> json);
    static void                   SetTimeout                       (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   GetErrorMessage                  (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   LogMessage                       (const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -1181,7 +1183,7 @@ int                        dbx_lcase                  (char *string);
 int                        dbx_create_string          (DBXSTR *pstr, void *data, short type);
 
 int                        dbx_log_transmission       (DBXCON *pcon, DBXMETH *pmeth, char *name);
-int                        dbx_buffer_dump            (DBXMETH *pmeth, void *buffer, unsigned int len, char *title, unsigned char csize, short mode);
+int                        dbx_log_response           (DBXCON *pcon, char *ibuffer, int ibuffer_len, char *name);
 int                        dbx_log_event              (DBXCON *pcon, char *message, char *title, int level);
 int                        dbx_log_buffer             (DBXCON *pcon, char *buffer, int buffer_len, char *title, int level);
 int                        dbx_test_file_access       (char *file, int mode);

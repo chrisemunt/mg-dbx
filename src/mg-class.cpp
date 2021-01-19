@@ -306,6 +306,10 @@ void mclass::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int binary)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK();
 
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) "mclass::classmethod");
+   }
+
    if (pmeth->output_val.type != DBX_DTYPE_OREF) {
       if (binary) {
          Local<Object> bx = node::Buffer::New(isolate, (char *) pmeth->output_val.svalue.buf_addr, (size_t) pmeth->output_val.svalue.len_used).ToLocalChecked();
@@ -423,6 +427,10 @@ void mclass::MethodEx(const FunctionCallbackInfo<Value>& args, int binary)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK();
 
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) "mclass::method");
+   }
+
    if (pmeth->output_val.type != DBX_DTYPE_OREF) {
       if (binary) {
          Local<Object> bx = node::Buffer::New(isolate, (char *) pmeth->output_val.svalue.buf_addr, (size_t) pmeth->output_val.svalue.len_used).ToLocalChecked();
@@ -527,6 +535,10 @@ void mclass::SetProperty(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK();
 
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) "mclass::setproperty");
+   }
+
    str = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(str);
    dbx_request_memory_free(pcon, pmeth, 0);
@@ -625,6 +637,10 @@ void mclass::GetPropertyEx(const FunctionCallbackInfo<Value>& args, int binary)
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK();
+
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) "mclass::getproperty");
+   }
 
    if (pmeth->output_val.type != DBX_DTYPE_OREF) {
       if (binary) {
