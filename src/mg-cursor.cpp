@@ -213,7 +213,7 @@ void mcursor::Execute(const FunctionCallbackInfo<Value>& args)
 
    pmeth->psql = cx->psql;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Execute", 1)));
@@ -304,7 +304,7 @@ void mcursor::Cleanup(const FunctionCallbackInfo<Value>& args)
 
    pmeth->psql = cx->psql;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Cleanup", 1)));
@@ -369,7 +369,7 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
    }
    pmeth = dbx_request_memory(pcon, 0);
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
@@ -584,7 +584,7 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
    }
    pmeth = dbx_request_memory(pcon, 0);
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Previous", 1)));

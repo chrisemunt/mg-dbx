@@ -247,7 +247,7 @@ void mglobal::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Get", 1)));
@@ -349,7 +349,7 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Set", 1)));
@@ -444,7 +444,7 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Defined", 1)));
@@ -538,7 +538,7 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Delete", 1)));
@@ -632,7 +632,7 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
@@ -724,7 +724,7 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Previous", 1)));
@@ -817,7 +817,7 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Increment", 1)));
@@ -912,7 +912,7 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Lock", 1)));
@@ -1037,7 +1037,7 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
    gref.global = gx->global_name;
    gref.pkey = gx->pkey;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Unlock", 1)));
@@ -1141,7 +1141,7 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
    }
    pmeth = dbx_request_memory(pcon, 0);
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc < 1) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The Merge method takes at least one argument (the global to merge from)", 1)));

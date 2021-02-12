@@ -138,7 +138,11 @@ Version 2.2.22 19 January 2021:
    Correct a fault that occasionally led to failures when sending long strings (greater than 32K) to the DB Server.
 	- For example global.set('key1', 'key2', [string 2MB in length]);
    Correct a fault that occasionally led to failures when returning long strings to Node.js from the DB Server.
-	- This fault only affected network based connectivity to the DB Server.  
+	- This fault only affected network based connectivity to the DB Server.
+
+Version 2.3.23 12 February 2021:
+   Introduce support for M transaction processing: tstart, $tlevel, tcommit, trollback.
+
 */
 
 
@@ -286,6 +290,11 @@ void DBX_DBNAME::Init(Handle<Object> exports)
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "classmethod_close", ClassMethod_Close);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "sql", SQL);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "sql_close", SQL_Close);
+
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "tstart", TStart);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "tlevel", TLevel);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "tcommit", TCommit);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "trollback", TRollback);
 
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "sleep", Sleep);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "benchmark", Benchmark);
@@ -890,7 +899,7 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
    }
    pmeth = dbx_request_memory(pcon, 0);
 
-   DBX_CALLBACK_FUN(js_narg, cb, async);
+   DBX_CALLBACK_FUN(js_narg, async);
 
    if (js_narg >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Open", 1)));
@@ -1130,7 +1139,7 @@ void DBX_DBNAME::Close(const FunctionCallbackInfo<Value>& args)
 
    pcon->open = 0;
 
-   DBX_CALLBACK_FUN(js_narg, cb, async);
+   DBX_CALLBACK_FUN(js_narg, async);
 
    pcon->error[0] = '\0';
    if (pcon && pcon->error[0]) {
@@ -1193,7 +1202,7 @@ void DBX_DBNAME::Namespace(const FunctionCallbackInfo<Value>& args)
 
    pmeth->ibuffer_used = 0;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on NameSpace", 1)));
@@ -1507,7 +1516,7 @@ void DBX_DBNAME::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
 
    pmeth->binary = binary;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Get", 1)));
@@ -1611,7 +1620,7 @@ void DBX_DBNAME::Set(const FunctionCallbackInfo<Value>& args)
    }
    pmeth = dbx_request_memory(pcon, 0);
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Set", 1)));
@@ -1702,7 +1711,7 @@ void DBX_DBNAME::Defined(const FunctionCallbackInfo<Value>& args)
    }
    pmeth = dbx_request_memory(pcon, 0);
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Defined", 1)));
@@ -1794,7 +1803,7 @@ void DBX_DBNAME::Delete(const FunctionCallbackInfo<Value>& args)
    }
    pmeth = dbx_request_memory(pcon, 0);
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Delete", 1)));
@@ -1885,7 +1894,7 @@ void DBX_DBNAME::Next(const FunctionCallbackInfo<Value>& args)
    }
    pmeth = dbx_request_memory(pcon, 0);
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
@@ -1975,7 +1984,7 @@ void DBX_DBNAME::Previous(const FunctionCallbackInfo<Value>& args)
    }
    pmeth = dbx_request_memory(pcon, 0);
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Previous", 1)));
@@ -2066,7 +2075,7 @@ void DBX_DBNAME::Increment(const FunctionCallbackInfo<Value>& args)
    }
    pmeth = dbx_request_memory(pcon, 0);
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Increment", 1)));
@@ -2159,7 +2168,7 @@ void DBX_DBNAME::Lock(const FunctionCallbackInfo<Value>& args)
    }
    pmeth = dbx_request_memory(pcon, 0);
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Lock", 1)));
@@ -2277,7 +2286,7 @@ void DBX_DBNAME::Unlock(const FunctionCallbackInfo<Value>& args)
    }
    pmeth = dbx_request_memory(pcon, 0);
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Unlock", 1)));
@@ -2630,7 +2639,7 @@ void DBX_DBNAME::ExtFunctionEx(const FunctionCallbackInfo<Value>& args, int bina
 
    pmeth->binary = binary;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Function", 1)));
@@ -2866,7 +2875,7 @@ void DBX_DBNAME::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int bina
 
    pmeth->binary = binary;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "InterSystems IRIS/Cache classes are not available with YottaDB!", 1)));
@@ -3059,6 +3068,219 @@ void DBX_DBNAME::SQL_Close(const FunctionCallbackInfo<Value>& args)
 
    cx->delete_mcursor_template(cx);
 
+   return;
+}
+
+
+/* v2.3.23 */
+void DBX_DBNAME::TStart(const FunctionCallbackInfo<Value>& args)
+{
+   short async;
+   int rc, js_narg, nx;
+   Local<String> str;
+   Local<Number> result;
+   DBXCON *pcon;
+   DBXMETH *pmeth;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   DBX_GET_ICONTEXT;
+   c->dbx_count ++;
+
+   pcon = c->pcon;
+   if (pcon->log_functions) {
+      LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::tstart");
+   }
+   pmeth = dbx_request_memory(pcon, 1);
+
+   DBX_CALLBACK_FUN(js_narg, async);
+
+   if (async) {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The tstart method cannot be invoked asynchronously", 1)));
+      dbx_request_memory_free(pcon, pmeth, 0);
+      return;
+   }
+
+   for (nx = 0; nx < js_narg; nx ++) {
+      str = DBX_TO_STRING(args[nx]);
+      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0);
+   }
+
+   DBX_DBFUN_START(c, pcon, pmeth);
+   rc = dbx_tstart(pmeth);
+   DBX_DBFUN_END(c);
+
+   if (rc != CACHE_SUCCESS) {
+      dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
+   }
+
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::tstart");
+   }
+
+   result = DBX_NUMBER_NEW(pmeth->output_val.num.int32);
+   args.GetReturnValue().Set(result);
+   dbx_request_memory_free(pcon, pmeth, 0);
+   return;
+}
+
+
+void DBX_DBNAME::TLevel(const FunctionCallbackInfo<Value>& args)
+{
+   short async;
+   int rc, js_narg, nx;
+   Local<String> str;
+   Local<Number> result;
+   DBXCON *pcon;
+   DBXMETH *pmeth;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   DBX_GET_ICONTEXT;
+   c->dbx_count ++;
+
+   pcon = c->pcon;
+   if (pcon->log_functions) {
+      LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::tlevel");
+   }
+   pmeth = dbx_request_memory(pcon, 1);
+
+   DBX_CALLBACK_FUN(js_narg, async);
+
+   if (async) {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The tlevel method cannot be invoked asynchronously", 1)));
+      dbx_request_memory_free(pcon, pmeth, 0);
+      return;
+   }
+
+   for (nx = 0; nx < js_narg; nx ++) {
+      str = DBX_TO_STRING(args[nx]);
+      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0);
+   }
+
+   DBX_DBFUN_START(c, pcon, pmeth);
+   rc = dbx_tlevel(pmeth);
+   DBX_DBFUN_END(c);
+
+   if (rc != CACHE_SUCCESS) {
+      dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
+   }
+
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::tlevel");
+   }
+
+   result = DBX_NUMBER_NEW(pmeth->output_val.num.int32);
+   args.GetReturnValue().Set(result);
+   dbx_request_memory_free(pcon, pmeth, 0);
+   return;
+}
+
+
+void DBX_DBNAME::TCommit(const FunctionCallbackInfo<Value>& args)
+{
+   short async;
+   int rc, js_narg, nx;
+   Local<String> str;
+   Local<Number> result;
+   DBXCON *pcon;
+   DBXMETH *pmeth;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   DBX_GET_ICONTEXT;
+   c->dbx_count ++;
+
+   pcon = c->pcon;
+   if (pcon->log_functions) {
+      LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::tcommit");
+   }
+   pmeth = dbx_request_memory(pcon, 1);
+
+   DBX_CALLBACK_FUN(js_narg, async);
+
+   if (async) {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The tcommit method cannot be invoked asynchronously", 1)));
+      dbx_request_memory_free(pcon, pmeth, 0);
+      return;
+   }
+
+   for (nx = 0; nx < js_narg; nx ++) {
+      str = DBX_TO_STRING(args[nx]);
+      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0);
+   }
+
+   DBX_DBFUN_START(c, pcon, pmeth);
+   rc = dbx_tcommit(pmeth);
+   DBX_DBFUN_END(c);
+
+   if (rc != CACHE_SUCCESS) {
+      dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
+   }
+
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::tcommit");
+   }
+
+   result = DBX_NUMBER_NEW(pmeth->output_val.num.int32);
+   args.GetReturnValue().Set(result);
+   dbx_request_memory_free(pcon, pmeth, 0);
+   return;
+}
+
+
+void DBX_DBNAME::TRollback(const FunctionCallbackInfo<Value>& args)
+{
+   short async;
+   int rc, js_narg, nx;
+   Local<String> str;
+   Local<Number> result;
+   DBXCON *pcon;
+   DBXMETH *pmeth;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   DBX_GET_ICONTEXT;
+   c->dbx_count ++;
+
+   pcon = c->pcon;
+   if (pcon->log_functions) {
+      LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::trollback");
+   }
+   pmeth = dbx_request_memory(pcon, 1);
+
+   DBX_CALLBACK_FUN(js_narg, async);
+
+   if (async) {
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The trollback method cannot be invoked asynchronously", 1)));
+      dbx_request_memory_free(pcon, pmeth, 0);
+      return;
+   }
+
+   for (nx = 0; nx < js_narg; nx ++) {
+      str = DBX_TO_STRING(args[nx]);
+      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0);
+   }
+
+   DBX_DBFUN_START(c, pcon, pmeth);
+   rc = dbx_trollback(pmeth);
+   DBX_DBFUN_END(c);
+
+   if (rc != CACHE_SUCCESS) {
+      dbx_error_message(pmeth, rc);
+      if (pcon->error_mode == 1) { /* v2.2.21 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
+   }
+
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::trollback");
+   }
+
+   result = DBX_NUMBER_NEW(pmeth->output_val.num.int32);
+   args.GetReturnValue().Set(result);
+   dbx_request_memory_free(pcon, pmeth, 0);
    return;
 }
 
@@ -4420,6 +4642,16 @@ __try {
    else {
       pcon->p_isc_so->multithread_enabled = 0;
    }
+
+   /* v2.3.23 */
+   sprintf(fun, "%sTStart", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheTStart = (int (*) (void)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sTLevel", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheTLevel = (int (*) (void)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sTCommit", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheTCommit = (int (*) (void)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sTRollback", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheTRollback = (int (*) (int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
 
    pcon->p_isc_so->loaded = 1;
 
@@ -7252,6 +7484,594 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_merge: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
+}
+
+
+int dbx_tstart(DBXMETH *pmeth)
+{
+   int rc, rc1;
+   unsigned int n, max, len, netbuf_used;
+   unsigned char *netbuf;
+   char *outstr8;
+   char buffer[256];
+   DBXFUN fun, *pfun;
+   DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
+
+   DBX_DB_LOCK(0);
+
+   if (pcon->net_connection) {
+      rc = netx_tcp_command(pmeth, DBX_CMND_TSTART, 0);
+      if (pmeth->output_val.svalue.len_used > 0) {
+         pmeth->output_val.svalue.buf_addr[pmeth->output_val.svalue.len_used] = '\0';
+         rc = (int) strtol((char *) pmeth->output_val.svalue.buf_addr, NULL, 10);
+      }
+      pmeth->output_val.num.int32 = rc;
+      goto dbx_tstart_exit;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      strcpy(pcon->error, "Transaction Processing only available over network based connectivity for YottaDB");
+      rc = CACHE_FAILURE;
+      pmeth->output_val.num.int32 = rc;
+      goto dbx_tstart_exit;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      pfun = &fun;
+      dbx_add_block_size(pmeth->ibuffer, pmeth->ibuffer_used, 0,  DBX_DSORT_EOD, DBX_DTYPE_STR8);
+      pmeth->ibuffer_used += 5;
+
+      netbuf = (pmeth->ibuffer - DBX_IBUFFER_OFFSET);
+      netbuf_used = (pmeth->ibuffer_used + DBX_IBUFFER_OFFSET);
+      dbx_add_block_size(netbuf, 0, pmeth->ibuffer_used + 10,  0, DBX_CMND_TSTART);
+
+      if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+         char buf1[32], buf3[32];
+         ydb_string_t out, in1, in2, in3;
+
+         pfun->rflag = 0;
+         pfun->label = (char *) "ifc_zmgsis";
+         pfun->label_len = 10;
+         pfun->routine = (char *) "";
+         pfun->routine_len = 0;
+         pmeth->argc = 3;
+
+         out.address = (char *) pmeth->ibuffer;
+         out.length = (unsigned long) pmeth->ibuffer_size;
+
+         strcpy(buf1, "0");
+         in1.address = buf1;
+         in1.length = 1;
+
+         in2.address = (char *) netbuf;
+         in2.length = (unsigned long) netbuf_used;
+
+         strcpy(buf3, "dbx");
+         in3.address = buf3;
+         in3.length = 3;
+         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, &out, &in1, &in2, &in3);
+
+         pmeth->ibuffer_used = 0;
+         if (rc > 0) {
+            pmeth->ibuffer_used = rc;
+         }
+         rc = (int) strtol((char *) pmeth->ibuffer, NULL, 10);
+         pmeth->output_val.num.int32 = rc;
+      }
+      else {
+         outstr8 = NULL;
+
+         pfun->rflag = 0;
+         pfun->label = (char *) "ifc";
+         pfun->label_len = 3;
+         pfun->routine = (char *) "%zmgsis";
+         pfun->routine_len = 7;
+         pmeth->argc = 3;
+         rc = pcon->p_isc_so->p_CachePushFunc(&(pfun->rflag), (int) pfun->label_len, (const Callin_char_t *) pfun->label, (int) pfun->routine_len, (const Callin_char_t *) pfun->routine);
+
+         rc1 = 0;
+         rc = pcon->p_isc_so->p_CachePushInt(rc1);
+         rc = pcon->p_isc_so->p_CachePushStr(netbuf_used, (Callin_char_t *) netbuf);
+         strcpy(buffer, "dbx");
+         rc = pcon->p_isc_so->p_CachePushStr(3, (Callin_char_t *) buffer);
+         rc = pcon->p_isc_so->p_CacheExtFun(pfun->rflag, pmeth->argc);
+
+         if (rc == CACHE_SUCCESS) {
+            rc = pcon->p_isc_so->p_CachePopStr((int *) &len, (Callin_char_t **) &outstr8);
+            max = pmeth->ibuffer_size - 1;
+            for (n = 0; n < len; n ++) {
+               if (n > max)
+                  break;
+               pmeth->ibuffer[n] = (char) outstr8[n];
+            }
+            pmeth->ibuffer[n] = '\0';
+            pmeth->ibuffer_used = len;
+            rc = (int) strtol((char *) pmeth->ibuffer, NULL, 10);
+            pmeth->output_val.num.int32 = rc;
+         }
+         else {
+            rc = CACHE_FAILURE;
+            strcpy(pcon->error, "InterSystems server error - unable to invoke function");
+            goto dbx_tstart_exit;
+         }
+      }
+      goto dbx_tstart_exit;
+   }
+
+   rc = pcon->p_isc_so->p_CacheTStart();
+
+   pmeth->output_val.num.int32 = rc;
+
+dbx_tstart_exit:
+
+   DBX_DB_UNLOCK();
+
+   return rc;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_tstart: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
+}
+
+
+int dbx_tlevel(DBXMETH *pmeth)
+{
+   int rc, rc1;
+   unsigned int n, max, len, netbuf_used;
+   unsigned char *netbuf;
+   char *outstr8;
+   char buffer[256];
+   DBXFUN fun, *pfun;
+   DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
+
+   DBX_DB_LOCK(0);
+
+   if (pcon->net_connection) {
+      rc = netx_tcp_command(pmeth, DBX_CMND_TLEVEL, 0);
+      if (pmeth->output_val.svalue.len_used > 0) {
+         pmeth->output_val.svalue.buf_addr[pmeth->output_val.svalue.len_used] = '\0';
+         rc = (int) strtol((char *) pmeth->output_val.svalue.buf_addr, NULL, 10);
+      }
+      pmeth->output_val.num.int32 = rc;
+      goto dbx_tlevel_exit;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      strcpy(pcon->error, "Transaction Processing only available over network based connectivity for YottaDB");
+      rc = CACHE_FAILURE;
+      pmeth->output_val.num.int32 = rc;
+      goto dbx_tlevel_exit;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      pfun = &fun;
+      dbx_add_block_size(pmeth->ibuffer, pmeth->ibuffer_used, 0,  DBX_DSORT_EOD, DBX_DTYPE_STR8);
+      pmeth->ibuffer_used += 5;
+
+      netbuf = (pmeth->ibuffer - DBX_IBUFFER_OFFSET);
+      netbuf_used = (pmeth->ibuffer_used + DBX_IBUFFER_OFFSET);
+      dbx_add_block_size(netbuf, 0, pmeth->ibuffer_used + 10,  0, DBX_CMND_TLEVEL);
+
+      if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+         char buf1[32], buf3[32];
+         ydb_string_t out, in1, in2, in3;
+
+         pfun->rflag = 0;
+         pfun->label = (char *) "ifc_zmgsis";
+         pfun->label_len = 10;
+         pfun->routine = (char *) "";
+         pfun->routine_len = 0;
+         pmeth->argc = 3;
+
+         out.address = (char *) pmeth->ibuffer;
+         out.length = (unsigned long) pmeth->ibuffer_size;
+
+         strcpy(buf1, "0");
+         in1.address = buf1;
+         in1.length = 1;
+
+         in2.address = (char *) netbuf;
+         in2.length = (unsigned long) netbuf_used;
+
+         strcpy(buf3, "dbx");
+         in3.address = buf3;
+         in3.length = 3;
+         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, &out, &in1, &in2, &in3);
+
+         pmeth->ibuffer_used = 0;
+         if (rc > 0) {
+            pmeth->ibuffer_used = rc;
+         }
+         rc = (int) strtol((char *) pmeth->ibuffer, NULL, 10);
+         pmeth->output_val.num.int32 = rc;
+      }
+      else {
+         outstr8 = NULL;
+
+         pfun->rflag = 0;
+         pfun->label = (char *) "ifc";
+         pfun->label_len = 3;
+         pfun->routine = (char *) "%zmgsis";
+         pfun->routine_len = 7;
+         pmeth->argc = 3;
+         rc = pcon->p_isc_so->p_CachePushFunc(&(pfun->rflag), (int) pfun->label_len, (const Callin_char_t *) pfun->label, (int) pfun->routine_len, (const Callin_char_t *) pfun->routine);
+
+         rc1 = 0;
+         rc = pcon->p_isc_so->p_CachePushInt(rc1);
+         rc = pcon->p_isc_so->p_CachePushStr(netbuf_used, (Callin_char_t *) netbuf);
+         strcpy(buffer, "dbx");
+         rc = pcon->p_isc_so->p_CachePushStr(3, (Callin_char_t *) buffer);
+         rc = pcon->p_isc_so->p_CacheExtFun(pfun->rflag, pmeth->argc);
+
+         if (rc == CACHE_SUCCESS) {
+            rc = pcon->p_isc_so->p_CachePopStr((int *) &len, (Callin_char_t **) &outstr8);
+            max = pmeth->ibuffer_size - 1;
+            for (n = 0; n < len; n ++) {
+               if (n > max)
+                  break;
+               pmeth->ibuffer[n] = (char) outstr8[n];
+            }
+            pmeth->ibuffer[n] = '\0';
+            pmeth->ibuffer_used = len;
+            rc = (int) strtol((char *) pmeth->ibuffer, NULL, 10);
+            pmeth->output_val.num.int32 = rc;
+         }
+         else {
+            rc = CACHE_FAILURE;
+            strcpy(pcon->error, "InterSystems server error - unable to invoke function");
+            goto dbx_tlevel_exit;
+         }
+      }
+      goto dbx_tlevel_exit;
+   }
+
+   rc = pcon->p_isc_so->p_CacheTLevel();
+
+   pmeth->output_val.num.int32 = rc;
+
+dbx_tlevel_exit:
+
+   DBX_DB_UNLOCK();
+
+   return rc;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_tlevel: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
+}
+
+
+int dbx_tcommit(DBXMETH *pmeth)
+{
+   int rc, rc1;
+   unsigned int n, max, len, netbuf_used;
+   unsigned char *netbuf;
+   char *outstr8;
+   char buffer[256];
+   DBXFUN fun, *pfun;
+   DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
+
+   DBX_DB_LOCK(0);
+
+   if (pcon->net_connection) {
+      rc = netx_tcp_command(pmeth, DBX_CMND_TCOMMIT, 0);
+      if (pmeth->output_val.svalue.len_used > 0) {
+         pmeth->output_val.svalue.buf_addr[pmeth->output_val.svalue.len_used] = '\0';
+         rc = (int) strtol((char *) pmeth->output_val.svalue.buf_addr, NULL, 10);
+      }
+      pmeth->output_val.num.int32 = rc;
+      goto dbx_tcommit_exit;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      strcpy(pcon->error, "Transaction Processing only available over network based connectivity for YottaDB");
+      rc = CACHE_FAILURE;
+      pmeth->output_val.num.int32 = rc;
+      goto dbx_tcommit_exit;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      pfun = &fun;
+      dbx_add_block_size(pmeth->ibuffer, pmeth->ibuffer_used, 0,  DBX_DSORT_EOD, DBX_DTYPE_STR8);
+      pmeth->ibuffer_used += 5;
+
+      netbuf = (pmeth->ibuffer - DBX_IBUFFER_OFFSET);
+      netbuf_used = (pmeth->ibuffer_used + DBX_IBUFFER_OFFSET);
+      dbx_add_block_size(netbuf, 0, pmeth->ibuffer_used + 10,  0, DBX_CMND_TCOMMIT);
+
+      if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+         char buf1[32], buf3[32];
+         ydb_string_t out, in1, in2, in3;
+
+         pfun->rflag = 0;
+         pfun->label = (char *) "ifc_zmgsis";
+         pfun->label_len = 10;
+         pfun->routine = (char *) "";
+         pfun->routine_len = 0;
+         pmeth->argc = 3;
+
+         out.address = (char *) pmeth->ibuffer;
+         out.length = (unsigned long) pmeth->ibuffer_size;
+
+         strcpy(buf1, "0");
+         in1.address = buf1;
+         in1.length = 1;
+
+         in2.address = (char *) netbuf;
+         in2.length = (unsigned long) netbuf_used;
+
+         strcpy(buf3, "dbx");
+         in3.address = buf3;
+         in3.length = 3;
+         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, &out, &in1, &in2, &in3);
+
+         pmeth->ibuffer_used = 0;
+         if (rc > 0) {
+            pmeth->ibuffer_used = rc;
+         }
+         rc = (int) strtol((char *) pmeth->ibuffer, NULL, 10);
+         pmeth->output_val.num.int32 = rc;
+      }
+      else {
+         outstr8 = NULL;
+
+         pfun->rflag = 0;
+         pfun->label = (char *) "ifc";
+         pfun->label_len = 3;
+         pfun->routine = (char *) "%zmgsis";
+         pfun->routine_len = 7;
+         pmeth->argc = 3;
+         rc = pcon->p_isc_so->p_CachePushFunc(&(pfun->rflag), (int) pfun->label_len, (const Callin_char_t *) pfun->label, (int) pfun->routine_len, (const Callin_char_t *) pfun->routine);
+
+         rc1 = 0;
+         rc = pcon->p_isc_so->p_CachePushInt(rc1);
+         rc = pcon->p_isc_so->p_CachePushStr(netbuf_used, (Callin_char_t *) netbuf);
+         strcpy(buffer, "dbx");
+         rc = pcon->p_isc_so->p_CachePushStr(3, (Callin_char_t *) buffer);
+         rc = pcon->p_isc_so->p_CacheExtFun(pfun->rflag, pmeth->argc);
+
+         if (rc == CACHE_SUCCESS) {
+            rc = pcon->p_isc_so->p_CachePopStr((int *) &len, (Callin_char_t **) &outstr8);
+            max = pmeth->ibuffer_size - 1;
+            for (n = 0; n < len; n ++) {
+               if (n > max)
+                  break;
+               pmeth->ibuffer[n] = (char) outstr8[n];
+            }
+            pmeth->ibuffer[n] = '\0';
+            pmeth->ibuffer_used = len;
+            rc = (int) strtol((char *) pmeth->ibuffer, NULL, 10);
+            pmeth->output_val.num.int32 = rc;
+         }
+         else {
+            rc = CACHE_FAILURE;
+            strcpy(pcon->error, "InterSystems server error - unable to invoke function");
+            goto dbx_tcommit_exit;
+         }
+      }
+      goto dbx_tcommit_exit;
+   }
+
+   rc = pcon->p_isc_so->p_CacheTCommit();
+
+   pmeth->output_val.num.int32 = rc;
+
+dbx_tcommit_exit:
+
+   DBX_DB_UNLOCK();
+
+   return rc;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_tcommit: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
+}
+
+
+int dbx_trollback(DBXMETH *pmeth)
+{
+   int rc, rc1;
+   unsigned int n, max, len, netbuf_used;
+   unsigned char *netbuf;
+   char *outstr8;
+   char buffer[256];
+   DBXFUN fun, *pfun;
+   DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
+
+   DBX_DB_LOCK(0);
+
+   if (pcon->net_connection) {
+      rc = netx_tcp_command(pmeth, DBX_CMND_TROLLBACK, 0);
+      if (pmeth->output_val.svalue.len_used > 0) {
+         pmeth->output_val.svalue.buf_addr[pmeth->output_val.svalue.len_used] = '\0';
+         rc = (int) strtol((char *) pmeth->output_val.svalue.buf_addr, NULL, 10);
+      }
+      pmeth->output_val.num.int32 = rc;
+      goto dbx_trollback_exit;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      strcpy(pcon->error, "Transaction Processing only available over network based connectivity for YottaDB");
+      rc = CACHE_FAILURE;
+      pmeth->output_val.num.int32 = rc;
+      goto dbx_trollback_exit;
+   }
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      pfun = &fun;
+      dbx_add_block_size(pmeth->ibuffer, pmeth->ibuffer_used, 0,  DBX_DSORT_EOD, DBX_DTYPE_STR8);
+      pmeth->ibuffer_used += 5;
+
+      netbuf = (pmeth->ibuffer - DBX_IBUFFER_OFFSET);
+      netbuf_used = (pmeth->ibuffer_used + DBX_IBUFFER_OFFSET);
+      dbx_add_block_size(netbuf, 0, pmeth->ibuffer_used + 10,  0, DBX_CMND_TROLLBACK);
+
+      if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+         char buf1[32], buf3[32];
+         ydb_string_t out, in1, in2, in3;
+
+         pfun->rflag = 0;
+         pfun->label = (char *) "ifc_zmgsis";
+         pfun->label_len = 10;
+         pfun->routine = (char *) "";
+         pfun->routine_len = 0;
+         pmeth->argc = 3;
+
+         out.address = (char *) pmeth->ibuffer;
+         out.length = (unsigned long) pmeth->ibuffer_size;
+
+         strcpy(buf1, "0");
+         in1.address = buf1;
+         in1.length = 1;
+
+         in2.address = (char *) netbuf;
+         in2.length = (unsigned long) netbuf_used;
+
+         strcpy(buf3, "dbx");
+         in3.address = buf3;
+         in3.length = 3;
+         rc = pcon->p_ydb_so->p_ydb_ci(pfun->label, &out, &in1, &in2, &in3);
+
+         pmeth->ibuffer_used = 0;
+         if (rc > 0) {
+            pmeth->ibuffer_used = rc;
+         }
+         rc = (int) strtol((char *) pmeth->ibuffer, NULL, 10);
+         pmeth->output_val.num.int32 = rc;
+      }
+      else {
+         outstr8 = NULL;
+
+         pfun->rflag = 0;
+         pfun->label = (char *) "ifc";
+         pfun->label_len = 3;
+         pfun->routine = (char *) "%zmgsis";
+         pfun->routine_len = 7;
+         pmeth->argc = 3;
+         rc = pcon->p_isc_so->p_CachePushFunc(&(pfun->rflag), (int) pfun->label_len, (const Callin_char_t *) pfun->label, (int) pfun->routine_len, (const Callin_char_t *) pfun->routine);
+
+         rc1 = 0;
+         rc = pcon->p_isc_so->p_CachePushInt(rc1);
+         rc = pcon->p_isc_so->p_CachePushStr(netbuf_used, (Callin_char_t *) netbuf);
+         strcpy(buffer, "dbx");
+         rc = pcon->p_isc_so->p_CachePushStr(3, (Callin_char_t *) buffer);
+         rc = pcon->p_isc_so->p_CacheExtFun(pfun->rflag, pmeth->argc);
+
+         if (rc == CACHE_SUCCESS) {
+            rc = pcon->p_isc_so->p_CachePopStr((int *) &len, (Callin_char_t **) &outstr8);
+            max = pmeth->ibuffer_size - 1;
+            for (n = 0; n < len; n ++) {
+               if (n > max)
+                  break;
+               pmeth->ibuffer[n] = (char) outstr8[n];
+            }
+            pmeth->ibuffer[n] = '\0';
+            pmeth->ibuffer_used = len;
+            rc = (int) strtol((char *) pmeth->ibuffer, NULL, 10);
+            pmeth->output_val.num.int32 = rc;
+         }
+         else {
+            rc = CACHE_FAILURE;
+            strcpy(pcon->error, "InterSystems server error - unable to invoke function");
+            goto dbx_trollback_exit;
+         }
+      }
+      goto dbx_trollback_exit;
+   }
+
+   rc = pcon->p_isc_so->p_CacheTRollback(0);
+
+   pmeth->output_val.num.int32 = rc;
+
+dbx_trollback_exit:
+
+   DBX_DB_UNLOCK();
+
+   return rc;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_trollback: %x", code);
       dbx_log_event(pcon, bufferx, "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {

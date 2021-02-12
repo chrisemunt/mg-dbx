@@ -250,7 +250,7 @@ void mclass::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int binary)
    cref.class_name = clx->class_name;
    cref.oref = clx->oref;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on ClassMethod", 1)));
@@ -371,7 +371,7 @@ void mclass::MethodEx(const FunctionCallbackInfo<Value>& args, int binary)
    cref.class_name = clx->class_name;
    cref.oref = clx->oref;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on ClassMethod", 1)));
@@ -479,7 +479,7 @@ void mclass::SetProperty(const FunctionCallbackInfo<Value>& args)
    cref.class_name = clx->class_name;
    cref.oref = clx->oref;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on ClassMethod", 1)));
@@ -582,7 +582,7 @@ void mclass::GetPropertyEx(const FunctionCallbackInfo<Value>& args, int binary)
    cref.class_name = clx->class_name;
    cref.oref = clx->oref;
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    if (pmeth->argc >= DBX_MAXARGS) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on ClassMethod", 1)));
@@ -690,7 +690,7 @@ void mclass::Reset(const FunctionCallbackInfo<Value>& args)
    }
    pmeth = dbx_request_memory(pcon, 0);
 
-   DBX_CALLBACK_FUN(pmeth->argc, cb, async);
+   DBX_CALLBACK_FUN(pmeth->argc, async);
 
    pmeth->argc = args.Length();
 

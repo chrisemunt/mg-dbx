@@ -32,8 +32,8 @@
 #define DBX_NODE_VERSION         (NODE_MAJOR_VERSION * 10000) + (NODE_MINOR_VERSION * 100) + NODE_PATCH_VERSION
 
 #define DBX_VERSION_MAJOR        "2"
-#define DBX_VERSION_MINOR        "2"
-#define DBX_VERSION_BUILD        "22"
+#define DBX_VERSION_MINOR        "3"
+#define DBX_VERSION_BUILD        "23"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -142,7 +142,7 @@ DISABLE_WCAST_FUNCTION_TYPE
 #endif
 
 #define DBX_MAXARGS              64
-#define DBX_DEFAULT_TIMEOUT      10
+#define DBX_DEFAULT_TIMEOUT      30
 
 #define DBX_THREADPOOL_MAX       8
 
@@ -206,6 +206,12 @@ DISABLE_WCAST_FUNCTION_TYPE
 
 #define DBX_CMND_GNAMENEXT       51
 #define DBX_CMND_GNAMEPREVIOUS   52
+
+/* v2.3.23 */
+#define DBX_CMND_TSTART          61
+#define DBX_CMND_TLEVEL          62
+#define DBX_CMND_TCOMMIT         63
+#define DBX_CMND_TROLLBACK       64
 
 #define DBX_IBUFFER_OFFSET       15
 
@@ -478,7 +484,7 @@ DISABLE_WCAST_FUNCTION_TYPE
 #define DBX_BOOLEAN_NEW(a)          Boolean::New(isolate, a)
 #define DBX_NULL()                  Null(isolate)
 
-#define DBX_CALLBACK_FUN(JSNARG, CB, ASYNC) \
+#define DBX_CALLBACK_FUN(JSNARG, ASYNC) \
    JSNARG = args.Length(); \
    if (JSNARG > 0 && args[JSNARG - 1]->IsFunction()) { \
       ASYNC = 1; \
@@ -853,6 +859,10 @@ typedef struct tagDBXISCSO {
    int               (* p_CacheErrorA)                   (CACHE_ASTRP, CACHE_ASTRP, int *);
    int               (* p_CacheErrxlateA)                (int, CACHE_ASTRP);
    int               (* p_CacheEnableMultiThread)        (void);
+   int               (* p_CacheTStart)                   (void);
+   int               (* p_CacheTLevel)                   (void);
+   int               (* p_CacheTCommit)                  (void);
+   int               (* p_CacheTRollback)                (int nlev);
 
 } DBXISCSO, *PDBXISCSO;
 
@@ -1068,6 +1078,10 @@ public:
    static void                   ClassMethod_Close                (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   SQL                              (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   SQL_Close                        (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   TStart                           (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   TLevel                           (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   TCommit                          (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   TRollback                        (const v8::FunctionCallbackInfo<v8::Value>& args);
 
    static void                   Benchmark                        (const v8::FunctionCallbackInfo<v8::Value>& args);
 
@@ -1139,6 +1153,10 @@ int                        dbx_increment              (DBXMETH *pmeth);
 int                        dbx_lock                   (DBXMETH *pmeth);
 int                        dbx_unlock                 (DBXMETH *pmeth);
 int                        dbx_merge                  (DBXMETH *pmeth);
+int                        dbx_tstart                 (DBXMETH *pmeth);
+int                        dbx_tlevel                 (DBXMETH *pmeth);
+int                        dbx_tcommit                (DBXMETH *pmeth);
+int                        dbx_trollback              (DBXMETH *pmeth);
 int                        dbx_function_reference     (DBXMETH *pmeth, DBXFUN *pfun);
 int                        dbx_function               (DBXMETH *pmeth);
 int                        dbx_class_reference        (DBXMETH *pmeth, int optype);
