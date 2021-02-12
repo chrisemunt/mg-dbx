@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-19 January 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+12 February 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v15.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -16,6 +16,7 @@ Contents
 * [Connecting to the database](#Connect)
 * [Invocation of database commands](#DBCommands)
 * [Invocation of database functions](#DBFunctions)
+* [Transaction Processing](#TProcessing)
 * [Direct access to InterSystems classes (IRIS and Cache)](#DBClasses)
 * [Direct access to SQL: MGSQL and InterSystems SQL (IRIS and Cache)](#DBSQL)
 * [Working with binary data](#Binary)
@@ -61,7 +62,7 @@ Assuming that Node.js is already installed and a C++ compiler is available to th
 This command will create the **mg-dbx** addon (*mg-dbx.node*).
 
 
-### Installing the M support routines
+### Installing the M support routines (also known as the DB Superserver)
 
 The M support routines are required for:
 
@@ -82,7 +83,7 @@ Change to your development UCI and check the installation:
        do ^%zmgsi
 
        M/Gateway Developments Ltd - Service Integration Gateway
-       Version: 3.6; Revision 15 (6 November 2020)
+       Version: 4.0; Revision 16 (11 February 2021)
 
 
 #### Installation for YottaDB
@@ -111,7 +112,7 @@ Link all the **zmgsi** routines and check the installation:
        do ^%zmgsi
 
        M/Gateway Developments Ltd - Service Integration Gateway
-       Version: 3.6; Revision 15 (6 November 2020)
+       Version: 4.0; Revision 16 (11 February 2021)
 
 Note that the version of **zmgsi** is successfully displayed.
 
@@ -124,68 +125,19 @@ Finally, add the following lines to the interface file (**zmgsi.ci** in the exam
 
 A copy of this file can be downloaded from the **/unix** directory of the  **mgsi** GitHub repository [here](https://github.com/chrisemunt/mgsi)
 
-### Setting up the network service (for network based connectivity only)
+### Starting the DB Superserver (for network based connectivity only)
 
 The default TCP server port for **zmgsi** is **7041**.  If you wish to use an alternative port then modify the following instructions accordingly.
 
-#### InterSystems Cache/IRIS
+* For InterSystems DB servers the concurrent TCP service should be started in the **%SYS** Namespace.
 
-Start the Cache/IRIS-hosted concurrent TCP service in the Manager UCI (the %SYS Namespace):
+Start the DB Superserver using the following command:
 
        do start^%zmgsi(0) 
 
 To use a server TCP port other than 7041, specify it in the start-up command (as opposed to using zero to indicate the default port of 7041).
 
-#### YottaDB
-
-Network connectivity to **YottaDB** is managed via the **xinetd** service.  First create the following launch script (called **zmgsi\_ydb** here):
-
-       /usr/local/lib/yottadb/r130/zmgsi_ydb
-
-Content:
-
-       #!/bin/bash
-       cd /usr/local/lib/yottadb/r130
-       export ydb_dir=/root/.yottadb
-       export ydb_dist=/usr/local/lib/yottadb/r130
-       export ydb_routines="/root/.yottadb/r1.30_x86_64/o*(/root/.yottadb/r1.30_x86_64/r /root/.yottadb/r) /usr/local/lib/yottadb/r130/libyottadbutil.so"
-       export ydb_gbldir="/root/.yottadb/r1.30_x86_64/g/yottadb.gld"
-       $ydb_dist/ydb -r xinetd^%zmgsis
-
-Note that you should, if necessary, modify the permissions on this file so that it is executable.  For example:
-
-       chmod a=rx /usr/local/lib/yottadb/r130/zmgsi_ydb
-
-Create the **xinetd** script (called **zmgsi\_xinetd** here): 
-
-       /etc/xinetd.d/zmgsi_xinetd
-
-Content:
-
-       service zmgsi_xinetd
-       {
-            disable         = no
-            type            = UNLISTED
-            port            = 7041
-            socket_type     = stream
-            wait            = no
-            user            = root
-            server          = /usr/local/lib/yottadb/r130/zmgsi_ydb
-       }
-
-* Note: sample copies of **zmgsi\_xinetd** and **zmgsi\_ydb** are included in the **/unix** directory of the **mgsi** GitHub repository [here](https://github.com/chrisemunt/mgsi).
-
-Edit the services file:
-
-       /etc/services
-
-Add the following line to this file:
-
-       zmgsi_xinetd          7041/tcp                        # zmgsi
-
-Finally restart the **xinetd** service:
-
-       /etc/init.d/xinetd restart
+* For YottaDB, as an alternative to starting the DB Superserver from the command prompt, Superserver processes can be started via the **xinetd** daemon.  Instructions for configuring this option can be found in the **mgsi** repository [here](https://github.com/chrisemunt/mgsi)
 
 
 ## <a name="Connect"></a> Connecting to the database
@@ -681,6 +633,60 @@ JavaScript invocation:
 * Note: use **function\_bx** to receive the result as a Node.js Buffer.
 
 
+## <a name="TProcessing"></a> Transaction Processing
+
+M DB Servers implement Transaction Processing by means of the methods described in this section.  When implementing transactions, care should be taken with JavaScript operations that are invoked asynchronously.  All the Transaction Processing methods describe here can only be invoked synchronously.  
+
+* With YottaDB, these methods are only available over network based connectivity to the DB Server.
+
+### Start a Transaction
+
+       result = db.tstart(<parameters>);
+
+* At this time, this method does not take any arguments.
+* On successful completion this method will return zero, or an error code on failure.
+
+Example:
+
+       result = db.tstart();
+
+
+### Determine the Transaction Level
+
+       result = db.tlevel(<parameters>);
+
+* At this time, this method does not take any arguments.
+* Transactions can be nested and this method will return the level of nesting.  If no Transaction is active this method will return zero.  Otherwise a positive integer will be returned to represent the current depth of Transaction nesting.
+
+Example:
+
+       tlevel = db.tlevel();
+
+
+### Commit a Transaction
+
+       result = db.tcommit(<parameters>);
+
+* At this time, this method does not take any arguments.
+* On successful completion this method will return zero, or an error code on failure.
+
+Example:
+
+       result = db.tcommit();
+
+
+### Rollback a Transaction
+
+       result = db.trollback(<parameters>);
+
+* At this time, this method does not take any arguments.
+* On successful completion this method will return zero, or an error code on failure.
+
+Example:
+
+       result = db.trollback();
+
+
 ## <a name="DBClasses"></a> Direct access to InterSystems classes (IRIS and Cache)
 
 ### Invocation of a ClassMethod
@@ -1165,6 +1171,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Correct a fault that occasionally led to failures when returning long strings to Node.js from the DB Server.
 	* This fault only affected network based connectivity to the DB Server.  
 
+### v2.3.23 (12 February 2021)
 
-
+* Introduce support for M Transaction Processing: tstart, $tlevel, tcommit, trollback.
 
