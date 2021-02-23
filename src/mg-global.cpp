@@ -67,7 +67,7 @@ void mglobal::Init(Handle<Object> exports)
    /* Prepare constructor template */
    Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
    tpl->SetClassName(String::NewFromUtf8(isolate, "mglobal"));
-   tpl->InstanceTemplate()->SetInternalFieldCount(1);
+   tpl->InstanceTemplate()->SetInternalFieldCount(3); /* v2.3.24 */
 #endif
 
    /* Prototypes */

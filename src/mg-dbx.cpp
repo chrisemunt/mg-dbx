@@ -143,6 +143,9 @@ Version 2.2.22 19 January 2021:
 Version 2.3.23 12 February 2021:
    Introduce support for M transaction processing: tstart, $tlevel, tcommit, trollback.
 
+Version 2.3.24 23 February 2021:
+   Correct a fault that resulted in a crash when loading the **mg-dbx** module in Node.js v10.
+
 */
 
 
@@ -256,7 +259,7 @@ void DBX_DBNAME::Init(Handle<Object> exports)
    Isolate* isolate = Isolate::GetCurrent();
 
    Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
-   tpl->InstanceTemplate()->SetInternalFieldCount(1);
+   tpl->InstanceTemplate()->SetInternalFieldCount(3); /* v2.3.24 */
    tpl->SetClassName(String::NewFromUtf8(isolate, DBX_DBNAME_STR));
 #endif
 
