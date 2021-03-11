@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "2"
 #define DBX_VERSION_MINOR        "3"
-#define DBX_VERSION_BUILD        "24"
+#define DBX_VERSION_BUILD        "25"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -677,6 +677,15 @@ typedef struct {
 #define YDB_LOCK_TIMEOUT   (YDB_INT_MAX - 4)
 #define YDB_NOTOK          (YDB_INT_MAX - 5)
 
+#define YDB_MAX_TP         32
+#define YDB_TPCTX_DB       1
+#define YDB_TPCTX_TLEVEL   2
+#define YDB_TPCTX_COMMIT   3
+#define YDB_TPCTX_ROLLBACK 4
+#define YDB_TPCTX_FUN      10
+#define YDB_TPCTX_QUERY    11
+#define YDB_TPCTX_ORDER    12
+
 typedef struct {
    unsigned int   len_alloc;
    unsigned int   len_used;
@@ -696,7 +705,7 @@ typedef struct {
 typedef ydb_buffer_t    DBXSTR;
 typedef char            ydb_char_t;
 typedef long            ydb_long_t;
-
+typedef int             (*ydb_tpfnptr_t) (void *tpfnparm);  
 
 /* End of YottaDB */
 
@@ -731,6 +740,19 @@ typedef struct tagDBXFUN {
    int            routine_len;
    char *         routine;
    char           buffer[128];
+   int            argc;
+   /* v2.3.25 */
+   ydb_string_t   in[DBX_MAXARGS];
+   ydb_string_t   out;
+   ydb_buffer_t * global;
+   int            in_nkeys;
+   ydb_buffer_t * in_keys;
+   int          * out_nkeys;
+   ydb_buffer_t * out_keys;
+   int            getdata;
+   ydb_buffer_t * data;
+   int            dir;
+   int            rc;
 } DBXFUN, *PDBXFUN;
 
 
@@ -895,7 +917,8 @@ typedef struct tagDBXYDBSO {
    int               (* p_ydb_cip)                       (ci_name_descriptor *ci_info, ...);
    int               (* p_ydb_lock_incr_s)               (unsigned long long timeout_nsec, ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray);
    int               (* p_ydb_lock_decr_s)               (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray);
-   void              (*p_ydb_zstatus)                    (ydb_char_t* msg_buffer, ydb_long_t buf_len);
+   void              (* p_ydb_zstatus)                   (ydb_char_t* msg_buffer, ydb_long_t buf_len);
+   int               (* p_ydb_tp_s)                      (ydb_tpfnptr_t tpfn, void *tpfnparm, const char *transid, int namecount, ydb_buffer_t *varnames);
 
 } DBXYDBSO, *PDBXYDBSO;
 
@@ -940,6 +963,9 @@ typedef struct tagDBXCON {
    char           log_file[256];
    char           log_filter[512];
 
+   int            tlevel;
+   void *         pthrt[YDB_MAX_TP];
+
 } DBXCON, *PDBXCON;
 
 
@@ -960,6 +986,7 @@ typedef struct tagDBXMETH {
    DBXSQL         *psql;
    int            (* p_dbxfun) (struct tagDBXMETH * pmeth);
    DBXCON         *pcon;
+   DBXFUN         *pfun;
 } DBXMETH, *PDBXMETH;
 
 
@@ -982,6 +1009,23 @@ struct dbx_pool_task {
    DBXMETH     *pmeth;
    struct dbx_pool_task *next;
 };
+
+
+/* v2.3.25 */
+typedef struct tagDBXTHRT {
+   int         context;
+   int         done;
+#if !defined(_WIN32)
+   pthread_t   parent_tid;
+   pthread_t   tp_tid;
+   pthread_mutex_t req_cv_mutex;
+   pthread_cond_t req_cv;
+   pthread_mutex_t res_cv_mutex;
+   pthread_cond_t res_cv;
+#endif
+   int         task_id;
+   DBXMETH     *pmeth;
+} DBXTHRT, *PDBXTHRT;
 
 
 class DBX_DBNAME : public node::ObjectWrap
@@ -1131,9 +1175,19 @@ int                        ydb_open                   (DBXMETH *pmeth);
 int                        ydb_parse_zv               (char *zv, DBXZV * p_isc_sv);
 int                        ydb_change_namespace       (DBXCON *pcon, char *nspace);
 int                        ydb_get_namespace          (DBXCON *pcon, char *nspace, int nspace_len);
+int                        ydb_get_intsvar            (DBXCON *pcon, char *svarname);
 int                        ydb_error_message          (DBXCON *pcon, int error_code);
 int                        ydb_error                  (DBXCON *pcon, int error_code);
 int                        ydb_function               (DBXMETH *pmeth, DBXFUN *pfun);
+int                        ydb_function_ex            (DBXMETH *pmeth, DBXFUN *pfun);
+int                        ydb_transaction_cb         (void *pargs);
+#if defined(_WIN32)
+LPTHREAD_START_ROUTINE     ydb_transaction_thread     (LPVOID pargs);
+#else
+void *                     ydb_transaction_thread     (void *pargs);
+#endif
+int                        ydb_transaction            (DBXMETH *pmeth);
+int                        ydb_transaction_task       (DBXMETH *pmeth, int context);
 
 int                        dbx_version                (DBXMETH *pmeth);
 int                        dbx_open                   (DBXMETH *pmeth);

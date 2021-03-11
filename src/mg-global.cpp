@@ -257,7 +257,7 @@ void mglobal::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
    
    DBX_DBFUN_START(c, pcon, pmeth);
 
-   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection));
+   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::get");
@@ -287,7 +287,13 @@ void mglobal::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
       rc = dbx_get(pmeth);
    }
    else if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
-      rc = pcon->p_ydb_so->p_ydb_get_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], &(pmeth->output_val.svalue));
+      if (pcon->tlevel) {
+         pmeth->p_dbxfun = (int (*) (struct tagDBXMETH * pmeth)) dbx_get;
+         rc = ydb_transaction_task(pmeth, YDB_TPCTX_DB);
+      }
+      else {
+         rc = pcon->p_ydb_so->p_ydb_get_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], &(pmeth->output_val.svalue));
+      }
    }
    else {
       rc = pcon->p_isc_so->p_CacheGlobalGet(pmeth->cargc - 1, 0);
@@ -359,7 +365,7 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
    
    DBX_DBFUN_START(c, pcon, pmeth);
 
-   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection));
+   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::set");
@@ -388,7 +394,13 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
       rc = dbx_set(pmeth);
    }
    else if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
-      rc = pcon->p_ydb_so->p_ydb_set_s(&(pmeth->args[0].svalue), pmeth->cargc - 2, &pmeth->yargs[0], &(pmeth->args[pmeth->cargc - 1].svalue));
+      if (pcon->tlevel) {
+         pmeth->p_dbxfun = (int (*) (struct tagDBXMETH * pmeth)) dbx_set;
+         rc = ydb_transaction_task(pmeth, YDB_TPCTX_DB);
+      }
+      else {
+         rc = pcon->p_ydb_so->p_ydb_set_s(&(pmeth->args[0].svalue), pmeth->cargc - 2, &pmeth->yargs[0], &(pmeth->args[pmeth->cargc - 1].svalue));
+      }
    }
    else {
       rc = pcon->p_isc_so->p_CacheGlobalSet(pmeth->cargc - 2);
@@ -454,7 +466,7 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
    
    DBX_DBFUN_START(c, pcon, pmeth);
 
-   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection));
+   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::defined");
@@ -483,8 +495,14 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
       rc = dbx_defined(pmeth);
    }
    else if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
-      rc = pcon->p_ydb_so->p_ydb_data_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], (unsigned int *) &n);
-      dbx_create_string(&(pmeth->output_val.svalue), (void *) &n, DBX_DTYPE_INT);
+      if (pcon->tlevel) {
+         pmeth->p_dbxfun = (int (*) (struct tagDBXMETH * pmeth)) dbx_defined;
+         rc = ydb_transaction_task(pmeth, YDB_TPCTX_DB);
+      }
+      else {
+         rc = pcon->p_ydb_so->p_ydb_data_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], (unsigned int *) &n);
+         dbx_create_string(&(pmeth->output_val.svalue), (void *) &n, DBX_DTYPE_INT);
+      }
    }
    else {
       rc = pcon->p_isc_so->p_CacheGlobalData(pmeth->cargc - 1, 0);
@@ -548,7 +566,7 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
    
    DBX_DBFUN_START(c, pcon, pmeth);
 
-   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection));
+   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::delete");
@@ -577,7 +595,13 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
       rc = dbx_delete(pmeth);
    }
    else if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
-      rc = pcon->p_ydb_so->p_ydb_delete_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], YDB_DEL_TREE);
+      if (pcon->tlevel) {
+         pmeth->p_dbxfun = (int (*) (struct tagDBXMETH * pmeth)) dbx_delete;
+         rc = ydb_transaction_task(pmeth, YDB_TPCTX_DB);
+      }
+      else {
+         rc = pcon->p_ydb_so->p_ydb_delete_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], YDB_DEL_TREE);
+      }
    }
    else {
       rc = pcon->p_isc_so->p_CacheGlobalKill(pmeth->cargc - 1, 0);
@@ -642,7 +666,7 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
    
    DBX_DBFUN_START(c, pcon, pmeth);
 
-   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection));
+   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::next");
@@ -671,7 +695,13 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
       rc = dbx_next(pmeth);
    }
    else if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
-      rc = pcon->p_ydb_so->p_ydb_subscript_next_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], &(pmeth->output_val.svalue));
+      if (pcon->tlevel) {
+         pmeth->p_dbxfun = (int (*) (struct tagDBXMETH * pmeth)) dbx_next;
+         rc = ydb_transaction_task(pmeth, YDB_TPCTX_DB);
+      }
+      else {
+         rc = pcon->p_ydb_so->p_ydb_subscript_next_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], &(pmeth->output_val.svalue));
+      }
    }
    else {
       rc = pcon->p_isc_so->p_CacheGlobalOrder(pmeth->cargc - 1, 1, 0);
@@ -734,7 +764,7 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
    
    DBX_DBFUN_START(c, pcon, pmeth);
 
-   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection));
+   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::previous");
@@ -763,7 +793,13 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
       rc = dbx_previous(pmeth);
    }
    else if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
-      rc = pcon->p_ydb_so->p_ydb_subscript_previous_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], &(pmeth->output_val.svalue));
+      if (pcon->tlevel) {
+         pmeth->p_dbxfun = (int (*) (struct tagDBXMETH * pmeth)) dbx_previous;
+         rc = ydb_transaction_task(pmeth, YDB_TPCTX_DB);
+      }
+      else {
+         rc = pcon->p_ydb_so->p_ydb_subscript_previous_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], &(pmeth->output_val.svalue));
+      }
    }
    else {
       rc = pcon->p_isc_so->p_CacheGlobalOrder(pmeth->cargc - 1, -1, 0);
@@ -828,7 +864,7 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon, pmeth);
 
    pmeth->increment = 1;
-   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection));
+   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::increment");
@@ -857,7 +893,13 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
       rc = dbx_increment(pmeth);
    }
    else if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
-      rc = pcon->p_ydb_so->p_ydb_incr_s(&(pmeth->args[0].svalue), pmeth->cargc - 2, &pmeth->yargs[0], &(pmeth->args[pmeth->cargc - 1].svalue), &(pmeth->output_val.svalue));
+      if (pcon->tlevel) {
+         pmeth->p_dbxfun = (int (*) (struct tagDBXMETH * pmeth)) dbx_increment;
+         rc = ydb_transaction_task(pmeth, YDB_TPCTX_DB);
+      }
+      else {
+         rc = pcon->p_ydb_so->p_ydb_incr_s(&(pmeth->args[0].svalue), pmeth->cargc - 2, &pmeth->yargs[0], &(pmeth->args[pmeth->cargc - 1].svalue), &(pmeth->output_val.svalue));
+      }
    }
    else {
       rc = pcon->p_isc_so->p_CacheGlobalIncrement(pmeth->cargc - 2);
@@ -928,7 +970,7 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon, pmeth);
 
    pmeth->lock = 1;
-   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection));
+   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::lock");
@@ -957,32 +999,38 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
       rc = dbx_lock(pmeth);
    }
    else if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
-      timeout = -1;
-      if (pmeth->args[pmeth->cargc - 1].svalue.len_used < 16) {
-         strncpy(buffer, pmeth->args[pmeth->cargc - 1].svalue.buf_addr, pmeth->args[pmeth->cargc - 1].svalue.len_used);
-         buffer[pmeth->args[pmeth->cargc - 1].svalue.len_used] = '\0';
-         timeout = (int) strtol(buffer, NULL, 10);
-      }
-      timeout_nsec = 1000000000;
-
-      if (timeout < 0)
-         timeout_nsec *= 3600;
-      else
-         timeout_nsec *= timeout;
-      rc = pcon->p_ydb_so->p_ydb_lock_incr_s(timeout_nsec, &(pmeth->args[0].svalue), pmeth->cargc - 2, &pmeth->yargs[0]);
-      if (rc == YDB_OK) {
-         retval = 1;
-         rc = YDB_OK;
-      }
-      else if (rc == YDB_LOCK_TIMEOUT) {
-         retval = 0;
-         rc = YDB_OK;
+      if (pcon->tlevel) {
+         pmeth->p_dbxfun = (int (*) (struct tagDBXMETH * pmeth)) dbx_lock;
+         rc = ydb_transaction_task(pmeth, YDB_TPCTX_DB);
       }
       else {
-         retval = 0;
-         rc = CACHE_FAILURE;
+         timeout = -1;
+         if (pmeth->args[pmeth->cargc - 1].svalue.len_used < 16) {
+            strncpy(buffer, pmeth->args[pmeth->cargc - 1].svalue.buf_addr, pmeth->args[pmeth->cargc - 1].svalue.len_used);
+            buffer[pmeth->args[pmeth->cargc - 1].svalue.len_used] = '\0';
+            timeout = (int) strtol(buffer, NULL, 10);
+         }
+         timeout_nsec = 1000000000;
+
+         if (timeout < 0)
+            timeout_nsec *= 3600;
+         else
+            timeout_nsec *= timeout;
+         rc = pcon->p_ydb_so->p_ydb_lock_incr_s(timeout_nsec, &(pmeth->args[0].svalue), pmeth->cargc - 2, &pmeth->yargs[0]);
+         if (rc == YDB_OK) {
+            retval = 1;
+            rc = YDB_OK;
+         }
+         else if (rc == YDB_LOCK_TIMEOUT) {
+            retval = 0;
+            rc = YDB_OK;
+         }
+         else {
+            retval = 0;
+            rc = CACHE_FAILURE;
+         }
+         dbx_create_string(&(pmeth->output_val.svalue), (void *) &retval, DBX_DTYPE_INT);
       }
-      dbx_create_string(&(pmeth->output_val.svalue), (void *) &retval, DBX_DTYPE_INT);
    }
    else {
       strncpy(buffer, pmeth->args[pmeth->cargc - 1].svalue.buf_addr, pmeth->args[pmeth->cargc - 1].svalue.len_used);
@@ -1048,7 +1096,7 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon, pmeth);
 
    pmeth->lock = 2;
-   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection));
+   rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::unlock");
@@ -1077,12 +1125,18 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
       rc = dbx_unlock(pmeth);
    }
    else if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
-      rc = pcon->p_ydb_so->p_ydb_lock_decr_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0]);
-      if (rc == YDB_OK)
-         retval = 1;
-      else
-         retval = 0;
-      dbx_create_string(&(pmeth->output_val.svalue), (void *) &retval, DBX_DTYPE_INT);
+      if (pcon->tlevel) {
+         pmeth->p_dbxfun = (int (*) (struct tagDBXMETH * pmeth)) dbx_unlock;
+         rc = ydb_transaction_task(pmeth, YDB_TPCTX_DB);
+      }
+      else {
+         rc = pcon->p_ydb_so->p_ydb_lock_decr_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0]);
+         if (rc == YDB_OK)
+            retval = 1;
+         else
+            retval = 0;
+         dbx_create_string(&(pmeth->output_val.svalue), (void *) &retval, DBX_DTYPE_INT);
+      }
    }
    else {
       int locktype;
