@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-23 February 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+11 March 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v15.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -637,7 +637,6 @@ JavaScript invocation:
 
 M DB Servers implement Transaction Processing by means of the methods described in this section.  When implementing transactions, care should be taken with JavaScript operations that are invoked asynchronously.  All the Transaction Processing methods describe here can only be invoked synchronously.  
 
-* With YottaDB, these methods are only available over network based connectivity to the DB Server.
 
 ### Start a Transaction
 
@@ -1179,3 +1178,8 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 * Correct a fault that resulted in a crash when loading the **mg-dbx** module in Node.js v10.
 	* This change only affects **mg-dbx** for Node.js v10.
+
+### v2.3.25 (11 March 2021)
+
+* Introduce support for YottaDB Transaction Processing over API based connectivity.
+	* This functionality was previously only available over network-based connectivity to YottaDB.
