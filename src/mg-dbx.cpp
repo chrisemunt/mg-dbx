@@ -67,7 +67,7 @@ Version 1.3.9 26 February 2020:
    Suppress a number of benign 'cast-function-type' compiler warnings when building on the Raspberry Pi.
 
 Version 1.3.9a 21 April 2020:
-   Verify that mg-dbx will build and work with Node.js v14.x.x.
+   Verify that mg-dbx will build and work with Node.js v14.x.x. (ABI: 83).
 
 Version 1.4.10 6 May 2020:
    Introduce support for Node.js/V8 worker threads (for Node.js v12.x.x. and later).
@@ -149,6 +149,11 @@ Version 2.3.24 23 February 2021:
 Version 2.3.25 11 March 2021:
    Introduce support for YottaDB Transaction Processing over API based connectivity.
 	- This functionality was previously only available over network-based connectivity to YottaDB.
+
+Version 2.3.25a 22 April 2021:
+   Verify that mg-dbx will build and work with Node.js v16.x.x. (ABI: 93).
+
+Version 2.4.26 2 September 2021: // cmtxxx
 
 */
 
@@ -365,9 +370,10 @@ void DBX_DBNAME::New(const FunctionCallbackInfo<Value>& args)
    c->pcon->p_mutex = &mutex_global;
    c->pcon->p_zv = NULL;
 
-   c->pcon->pmeth_base = (void *) dbx_request_memory_alloc(c->pcon, 0);
+   c->pcon->pmeth_base = (void *) dbx_request_memory_alloc(c->pcon, 2, 0);
 
    c->pcon->utf8 = 1; /* seems to be faster with UTF8 on! */
+   c->pcon->utf16 = 0; /* v2.4.26 */
    c->pcon->net_connection = 0;
    c->pcon->path[0] = '\0';
    c->pcon->net_host[0] = '\0';
@@ -494,7 +500,7 @@ async_rtn DBX_DBNAME::dbx_invoke_callback(uv_work_t *req)
       argv[1] = baton->result_obj;
    }
    else {
-      baton->result_str = dbx_new_string8n(isolate, baton->pmeth->output_val.svalue.buf_addr, baton->pmeth->output_val.svalue.len_used, baton->c->pcon->utf8);
+      baton->result_str = baton->pmeth->pcon->utf16 ? dbx_new_string16n(isolate, baton->pmeth->output_val.cvalue.buf16_addr, baton->pmeth->output_val.cvalue.len_used) : dbx_new_string8n(isolate, baton->pmeth->output_val.svalue.buf_addr, baton->pmeth->output_val.svalue.len_used, baton->c->pcon->utf8);
       argv[1] = baton->result_str;
    }
 
@@ -632,7 +638,7 @@ void DBX_DBNAME::Version(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::version");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 0, 0);
 
    js_narg = args.Length();
 
@@ -842,6 +848,9 @@ void DBX_DBNAME::Charset(const FunctionCallbackInfo<Value>& args)
       if (pcon->utf8 == 0) {
          strcpy(buffer, "ascii");
       }
+      else if (pcon->utf8 == 2) {
+         strcpy(buffer, "utf-16");
+      }
       else {
          strcpy(buffer, "utf-8");
       }
@@ -875,6 +884,10 @@ void DBX_DBNAME::Charset(const FunctionCallbackInfo<Value>& args)
       pcon->utf8 = 1;
       strcpy(buffer, "utf-8");
    }
+   else if (strstr(buffer, "utf16") || strstr(buffer, "utf-16")) { /* v2.4.26 */
+      pcon->utf8 = 2;
+      strcpy(buffer, "utf-16");
+   }
    else {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Invalid 'character set' argument supplied to the SetCharset method", 1)));
       return;
@@ -905,7 +918,7 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::open");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 0, 0);
 
    DBX_CALLBACK_FUN(js_narg, async);
 
@@ -1141,7 +1154,7 @@ void DBX_DBNAME::Close(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::close");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 0, 0);
 
    DBX_DBFUN_START(c, pcon, pmeth);
 
@@ -1206,7 +1219,7 @@ void DBX_DBNAME::Namespace(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::namespace");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 0, 0);
 
    pmeth->ibuffer_used = 0;
 
@@ -1222,7 +1235,7 @@ void DBX_DBNAME::Namespace(const FunctionCallbackInfo<Value>& args)
 
    if (pmeth->argc > 0) {
       result = DBX_TO_STRING(args[0]);
-      dbx_ibuffer_add(pmeth, isolate, 0, result, NULL, 0, 0);
+      dbx_ibuffer_add(pmeth, isolate, 0, result, NULL, 0, 0, 0);
    }
 
    if (pcon->log_transmissions) {
@@ -1383,28 +1396,35 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
    n = 0;
    pmeth->args[nx].cvalue.pstr = 0;
    if (pgref) {
-      dbx_ibuffer_add(pmeth, isolate, nx, str, pgref->global, (int) strlen(pgref->global), 0);
+      pgref->global16_len ? dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) pgref->global16, (int) pgref->global16_len, 1, 0) : dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) pgref->global, (int) pgref->global_len, 0, 0);
    }
    else {
       str = DBX_TO_STRING(args[n]);
-      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0);
+      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0, 0);
       n ++;
    }
 
    if (pcon->dbtype != DBX_DBTYPE_YOTTADB && context == 0) {
       if (pmeth->lock) {
-         rc = pcon->p_isc_so->p_CachePushLock((int) pmeth->args[nx].svalue.len_used, (Callin_char_t *) pmeth->args[nx].svalue.buf_addr);
+         rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushLockW((int) pmeth->args[nx].cvalue.len_used, (unsigned short *) pmeth->args[nx].cvalue.buf16_addr) : pcon->p_isc_so->p_CachePushLock((int) pmeth->args[nx].svalue.len_used, (Callin_char_t *) pmeth->args[nx].svalue.buf_addr);
       }
       else {
-         if (pmeth->args[nx].svalue.buf_addr[nx] == '^')
-            rc = pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[nx].svalue.len_used - 1, (Callin_char_t *) pmeth->args[nx].svalue.buf_addr + 1);
-         else
-            rc = pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[nx].svalue.len_used, (Callin_char_t *) pmeth->args[nx].svalue.buf_addr);
+         if (pcon->utf16) {
+            if (pmeth->args[nx].cvalue.buf16_addr[0] == 94)
+               rc = pcon->p_isc_so->p_CachePushGlobalW((int) pmeth->args[nx].cvalue.len_used - 1, (unsigned short *) pmeth->args[nx].cvalue.buf16_addr + 1);
+            else
+               rc = pcon->p_isc_so->p_CachePushGlobalW((int) pmeth->args[nx].cvalue.len_used, (unsigned short *) pmeth->args[nx].cvalue.buf16_addr);
+         }
+         else {
+            if (pmeth->args[nx].svalue.buf_addr[0] == '^')
+               rc = pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[nx].svalue.len_used - 1, (Callin_char_t *) pmeth->args[nx].svalue.buf_addr + 1);
+            else
+               pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[nx].svalue.len_used, (Callin_char_t *) pmeth->args[nx].svalue.buf_addr);
+         }
       }
    }
 
    nx ++;
-
    if (pgref && (pval = pgref->pkey)) {
       while (pval) {
          pmeth->args[nx].cvalue.pstr = 0;
@@ -1412,10 +1432,13 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
             pmeth->args[nx].type = DBX_DTYPE_INT;
             pmeth->args[nx].num.int32 = (int) pval->num.int32;
             T_SPRINTF(buffer, _dbxso(buffer), "%d", pval->num.int32);
-            dbx_ibuffer_add(pmeth, isolate, nx, str, buffer, (int) strlen(buffer), 0);
+            dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) buffer, (int) strlen(buffer), 0, 0);
          }
          else {
-            dbx_ibuffer_add(pmeth, isolate, nx, str, pval->svalue.buf_addr, (int) pval->svalue.len_used, 0);
+            if (pval->type == DBX_DTYPE_STR16)
+               dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) pval->cvalue.buf16_addr, (int) pval->cvalue.len_used, 1, 0);
+            else
+               dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) pval->svalue.buf_addr, (int) pval->svalue.len_used, 0, 0);
          }
 /*
 {
@@ -1444,7 +1467,7 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
       if (args[n]->IsInt32()) {
          pmeth->args[nx].num.int32 = (int) DBX_INT32_VALUE(args[n]);
          T_SPRINTF(buffer, _dbxso(buffer), "%d", pmeth->args[nx].num.int32);
-         dbx_ibuffer_add(pmeth, isolate, nx, str, buffer, (int) strlen(buffer), 0);
+         dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) buffer, (int) strlen(buffer), 0, 0);
          pmeth->args[nx].type = DBX_DTYPE_INT;
       }
       else {
@@ -1454,16 +1477,23 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
          if (otype == 2) {
             p = node::Buffer::Data(obj);
             len = (int) node::Buffer::Length(obj);
-            dbx_ibuffer_add(pmeth, isolate, nx, str, p, (int) len, 0);
+            dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) p, (int) len, 0, 0);
          }
          else {
             str = DBX_TO_STRING(args[n]);
-            dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0);
+            dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0, 0);
          }
       }
 
       if (pmeth->increment && n == (pmeth->argc - 1)) { /* v1.3.8 */
-         if (pmeth->args[nx].svalue.len_used < 32) {
+         if (pcon->utf16 && pmeth->args[nx].cvalue.len_used < 32) {
+            unsigned int n;
+            for (n = 0; n < pmeth->args[nx].cvalue.len_used; n ++) {
+               buffer[n] = (char) pmeth->args[nx].cvalue.buf16_addr[n];
+            }
+            buffer[pmeth->args[nx].cvalue.len_used] = '\0';
+         }
+         else if (!pcon->utf16 && pmeth->args[nx].svalue.len_used < 32) {
             T_STRNCPY(buffer, _dbxso(buffer), pmeth->args[nx].svalue.buf_addr, pmeth->args[nx].svalue.len_used);
          }
          else {
@@ -1520,7 +1550,7 @@ void DBX_DBNAME::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::get");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    pmeth->binary = binary;
 
@@ -1608,7 +1638,7 @@ void DBX_DBNAME::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
       args.GetReturnValue().Set(bx);
    }
    else {
-      result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
+      result = pcon->utf16 ? dbx_new_string16n(isolate, pmeth->output_val.cvalue.buf16_addr, pmeth->output_val.cvalue.len_used) : dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
       args.GetReturnValue().Set(result);
    }
 
@@ -1632,7 +1662,7 @@ void DBX_DBNAME::Set(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::set");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
 
@@ -1729,7 +1759,7 @@ void DBX_DBNAME::Defined(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::defined");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
 
@@ -1827,7 +1857,7 @@ void DBX_DBNAME::Delete(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::delete");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
 
@@ -1924,7 +1954,7 @@ void DBX_DBNAME::Next(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::next");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
 
@@ -1998,7 +2028,7 @@ void DBX_DBNAME::Next(const FunctionCallbackInfo<Value>& args)
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::next");
    }
 
-   result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
+   result = pcon->utf16 ? dbx_new_string16n(isolate, pmeth->output_val.cvalue.buf16_addr, pmeth->output_val.cvalue.len_used) : dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
    dbx_request_memory_free(pcon, pmeth, 0);
    return;
@@ -2020,7 +2050,7 @@ void DBX_DBNAME::Previous(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::previous");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
 
@@ -2094,7 +2124,7 @@ void DBX_DBNAME::Previous(const FunctionCallbackInfo<Value>& args)
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::previous");
    }
 
-   result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
+   result = pcon->utf16 ? dbx_new_string16n(isolate, pmeth->output_val.cvalue.buf16_addr, pmeth->output_val.cvalue.len_used) : dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
 
    args.GetReturnValue().Set(result);
    dbx_request_memory_free(pcon, pmeth, 0);
@@ -2117,7 +2147,7 @@ void DBX_DBNAME::Increment(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::increment");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
 
@@ -2192,7 +2222,7 @@ void DBX_DBNAME::Increment(const FunctionCallbackInfo<Value>& args)
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::increment");
    }
 
-   result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
+   result = pcon->utf16 ? dbx_new_string16n(isolate, pmeth->output_val.cvalue.buf16_addr, pmeth->output_val.cvalue.len_used) : dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
    dbx_request_memory_free(pcon, pmeth, 0);
    return;
@@ -2216,7 +2246,7 @@ void DBX_DBNAME::Lock(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::lock");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
 
@@ -2340,7 +2370,7 @@ void DBX_DBNAME::Unlock(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::unlock");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
 
@@ -2444,7 +2474,7 @@ void DBX_DBNAME::MGlobal(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::mglobal");
    }
-   pmeth = dbx_request_memory(pcon, 1);
+   pmeth = dbx_request_memory(pcon, 1, 1);
 
    pmeth->argc = args.Length();
 
@@ -2460,6 +2490,10 @@ void DBX_DBNAME::MGlobal(const FunctionCallbackInfo<Value>& args)
 
    gx->c = c;
    gx->pkey = NULL;
+   gx->global_name[0] = '\0';
+   gx->global_name_len = 0;
+   gx->global_name16[0] = 0;
+   gx->global_name16_len = 0;
 
    /* 1.4.10 */
    rc = dbx_global_reset(args, isolate, pcon, pmeth, (void *) gx, 0, 0);
@@ -2534,7 +2568,7 @@ void DBX_DBNAME::MGlobalQuery(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::mglobalquery");
    }
-   pmeth = dbx_request_memory(pcon, 1);
+   pmeth = dbx_request_memory(pcon, 1, 1);
 
    pmeth->argc = args.Length();
 
@@ -2611,26 +2645,48 @@ int DBX_DBNAME::ExtFunctionReference(DBX_DBNAME *c, const FunctionCallbackInfo<V
    n = 0;
    pmeth->args[nx].cvalue.pstr = 0;
    if (pfref) {
-      dbx_ibuffer_add(pmeth, isolate, nx, str, pfref->function, (int) strlen(pfref->function), 1);
+      pcon->utf16 ? dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) pfref->function16, (int) pfref->function_len, 1, 1) : dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) pfref->function, (int) pfref->function_len, 0, 1);
    }
    else {
       str = DBX_TO_STRING(args[n]);
-      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 1);
+      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0, 1);
       n ++;
    }
 
    if (context == 0) {
-      T_STRNCPY(pfun->buffer, _dbxso(pfun->buffer), pmeth->args[nx].svalue.buf_addr, pmeth->args[nx].svalue.len_used);
-      pfun->buffer[pmeth->args[nx].svalue.len_used] = '\0';
-      pfun->label = pfun->buffer;
-      pfun->routine = strstr(pfun->buffer, "^");
-      *pfun->routine = '\0';
-      pfun->routine ++;
-      pfun->label_len = (int) strlen(pfun->label);
-      pfun->routine_len = (int) strlen(pfun->routine);
+      if (pcon->utf16) {
+         unsigned int n16, nc;
 
+         pfun->label = NULL;
+         pfun->routine = NULL;
+         nc = 0;
+         for (n16 = 0; n16 < pmeth->args[nx].cvalue.len_used; n16 ++) {
+            pfun->buffer.str16[n16] = pmeth->args[nx].cvalue.buf16_addr[n16];
+            if (pfun->buffer.str16[n16] == 94) {
+               nc = n16;
+            }
+         }
+         pfun->buffer.str16[pmeth->args[nx].cvalue.len_used] = 0;
+         pfun->label16 = pfun->buffer.str16;
+         pfun->routine16 = pfun->buffer.str16 + nc + 1;
+         pfun->buffer.str16[nc] = 0;
+         pfun->label_len = (int) nc;
+         pfun->routine_len = (int) (pmeth->args[nx].cvalue.len_used - (nc + 1));
+      }
+      else {
+         pfun->label16 = NULL;
+         pfun->routine16 = NULL;
+         T_STRNCPY(pfun->buffer.str8, _dbxso(pfun->buffer), pmeth->args[nx].svalue.buf_addr, pmeth->args[nx].svalue.len_used);
+         pfun->buffer.str8[pmeth->args[nx].svalue.len_used] = '\0';
+         pfun->label = pfun->buffer.str8;
+         pfun->routine = strstr(pfun->buffer.str8, "^");
+         *pfun->routine = '\0';
+         pfun->routine ++;
+         pfun->label_len = (int) strlen(pfun->label);
+         pfun->routine_len = (int) strlen(pfun->routine);
+      }
       if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
-         rc = pcon->p_isc_so->p_CachePushFunc(&(pfun->rflag), (int) pfun->label_len, (const Callin_char_t *) pfun->label, (int) pfun->routine_len, (const Callin_char_t *) pfun->routine);
+         rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushFuncW(&(pfun->rflag), (int) pfun->label_len, (const unsigned short *) pfun->label16, (int) pfun->routine_len, (const unsigned short *) pfun->routine16) : pcon->p_isc_so->p_CachePushFunc(&(pfun->rflag), (int) pfun->label_len, (const Callin_char_t *) pfun->label, (int) pfun->routine_len, (const Callin_char_t *) pfun->routine);
       }
    }
 
@@ -2644,7 +2700,7 @@ int DBX_DBNAME::ExtFunctionReference(DBX_DBNAME *c, const FunctionCallbackInfo<V
          pmeth->args[nx].type = DBX_DTYPE_INT;
          pmeth->args[nx].num.int32 = (int) DBX_INT32_VALUE(args[n]);
          T_SPRINTF(buffer, _dbxso(buffer), "%d", pmeth->args[nx].num.int32);
-         dbx_ibuffer_add(pmeth, isolate, nx, str, buffer, (int) strlen(buffer), 1);
+         dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) buffer, (int) strlen(buffer), 0, 1);
       }
       else {
          pmeth->args[nx].type = DBX_DTYPE_STR;
@@ -2653,11 +2709,11 @@ int DBX_DBNAME::ExtFunctionReference(DBX_DBNAME *c, const FunctionCallbackInfo<V
          if (otype == 2) {
             p = node::Buffer::Data(obj);
             len = (int) node::Buffer::Length(obj);
-            dbx_ibuffer_add(pmeth, isolate, nx, str, p, (int) len, 1);
+            dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) p, (int) len, 0, 1);
          }
          else {
             str = DBX_TO_STRING(args[n]);
-            dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 1);
+            dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0, 1);
          }
       }
       if (pcon->dbtype != DBX_DBTYPE_YOTTADB && context == 0) {
@@ -2697,7 +2753,7 @@ void DBX_DBNAME::ExtFunctionEx(const FunctionCallbackInfo<Value>& args, int bina
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::extfunction");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    pmeth->binary = binary;
 
@@ -2776,7 +2832,7 @@ void DBX_DBNAME::ExtFunctionEx(const FunctionCallbackInfo<Value>& args, int bina
       args.GetReturnValue().Set(bx);
    }
    else {
-      result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
+      result = pcon->utf16 ? dbx_new_string16n(isolate, pmeth->output_val.cvalue.buf16_addr, pmeth->output_val.cvalue.len_used) : dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
       args.GetReturnValue().Set(result);
    }
    dbx_request_memory_free(pcon, pmeth, 0);
@@ -2810,43 +2866,48 @@ int DBX_DBNAME::ClassReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>&
    pmeth->args[nx].cvalue.pstr = 0;
    if (pcref) {
       if (pcref->optype == 0) {
-         dbx_ibuffer_add(pmeth, isolate, nx, str, pcref->class_name, (int) strlen(pcref->class_name), 0);
+         pcon->utf16 ? dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) pcref->class_name16, (int) pcref->class_name16_len, 1, 0) : dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) pcref->class_name, (int) pcref->class_name_len, 0, 0);
       }
       else {
          sprintf(buffer, "%d", pcref->oref);
          pmeth->args[nx].num.oref = pcref->oref;
-         dbx_ibuffer_add(pmeth, isolate, nx, str, buffer, (int) strlen(buffer), 0);
+         dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) buffer, (int) strlen(buffer), 0, 0);
       }
    }
    else {
       str = DBX_TO_STRING(args[n]);
-      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0);
+      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0, 0);
       n ++;
    }
    nx ++;
 
    str = DBX_TO_STRING(args[n]);
-   dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0);
+   dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0, 0);
    n ++;
    nx ++;
 
    if (context == 0) {
       if (pcref) {
          if (pcref->optype == 0) { /* classmethod from mclass */
-            rc = pcon->p_isc_so->p_CachePushClassMethod((int) pmeth->args[0].svalue.len_used, (Callin_char_t *) pmeth->args[0].svalue.buf_addr, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr, 1);
+            rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushClassMethodW((int) pmeth->args[0].cvalue.len_used, (unsigned short *) pmeth->args[0].cvalue.buf16_addr, (int) pmeth->args[1].cvalue.len_used, (unsigned short *) pmeth->args[1].cvalue.buf16_addr, 1)
+                             : pcon->p_isc_so->p_CachePushClassMethod((int) pmeth->args[0].svalue.len_used, (Callin_char_t *) pmeth->args[0].svalue.buf_addr, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr, 1);
          }
          else if (pcref->optype == 1) { /* method from mclass */
-            rc = pcon->p_isc_so->p_CachePushMethod(pcref->oref, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr, 1);
+            rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushMethodW(pcref->oref, (int) pmeth->args[1].cvalue.len_used, (unsigned short *) pmeth->args[1].cvalue.buf16_addr, 1)
+                             : pcon->p_isc_so->p_CachePushMethod(pcref->oref, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr, 1);
          }
          else if (pcref->optype == 2) { /* set from mclass */
-            rc = pcon->p_isc_so->p_CachePushProperty(pcref->oref, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr);
+            rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushPropertyW(pcref->oref, (int) pmeth->args[1].cvalue.len_used, (unsigned short *) pmeth->args[1].cvalue.buf16_addr)
+                             : pcon->p_isc_so->p_CachePushProperty(pcref->oref, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr);
          }
          else if (pcref->optype == 3) { /* get from mclass */
-            rc = pcon->p_isc_so->p_CachePushProperty(pcref->oref, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr);
+            rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushPropertyW(pcref->oref, (int) pmeth->args[1].cvalue.len_used, (unsigned short *) pmeth->args[1].cvalue.buf16_addr)
+                             : pcon->p_isc_so->p_CachePushProperty(pcref->oref, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr);
          }
       }
       else { /* classmethod from dbx */
-         rc = pcon->p_isc_so->p_CachePushClassMethod((int) pmeth->args[0].svalue.len_used, (Callin_char_t *) pmeth->args[0].svalue.buf_addr, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr, 1);
+         rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushClassMethodW((int) pmeth->args[0].cvalue.len_used, (unsigned short *) pmeth->args[0].cvalue.buf16_addr, (int) pmeth->args[1].cvalue.len_used, (unsigned short *) pmeth->args[1].cvalue.buf16_addr, 1)
+                          : pcon->p_isc_so->p_CachePushClassMethod((int) pmeth->args[0].svalue.len_used, (Callin_char_t *) pmeth->args[0].svalue.buf_addr, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr, 1);
       }
    }
 
@@ -2857,7 +2918,7 @@ int DBX_DBNAME::ClassReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>&
       if (args[n]->IsInt32()) {
          pmeth->args[nx].num.int32 = (int) DBX_INT32_VALUE(args[n]);
          T_SPRINTF(buffer, _dbxso(buffer), "%d", pmeth->args[nx].num.int32);
-         dbx_ibuffer_add(pmeth, isolate, nx, str, buffer, (int) strlen(buffer), 0);
+         dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) buffer, (int) strlen(buffer), 0, 0);
          pmeth->args[nx].type = DBX_DTYPE_INT;
       }
       else {
@@ -2868,7 +2929,7 @@ int DBX_DBNAME::ClassReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>&
          if (otype == 2) {
             p = node::Buffer::Data(obj);
             len = (int) node::Buffer::Length(obj);
-            dbx_ibuffer_add(pmeth, isolate, nx, str, p, (int) len, 0);
+            dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) p, (int) len, 0, 0);
          }
          else {
             clx = NULL;
@@ -2881,7 +2942,7 @@ int DBX_DBNAME::ClassReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>&
                      pmeth->args[nx].num.oref = (int) clx->oref;
                      T_SPRINTF(buffer, _dbxso(buffer), "%d", pmeth->args[nx].num.oref);
                      pmeth->args[nx].type = DBX_DTYPE_OREF;
-                     dbx_ibuffer_add(pmeth, isolate, nx, str, buffer, (int) strlen(buffer), 0);
+                     dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) buffer, (int) strlen(buffer), 0, 0);
                      pmeth->args[nx].type = DBX_DTYPE_OREF;
 
                   }
@@ -2889,7 +2950,7 @@ int DBX_DBNAME::ClassReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>&
             }
             if (!clx) {
                str = DBX_TO_STRING(args[n]);
-               dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0);
+               dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0, 0);
             }
          }
       }
@@ -2924,7 +2985,7 @@ void DBX_DBNAME::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int bina
    DBXCON *pcon;
    DBXMETH *pmeth;
    Local<Object> obj;
-   Local<String> str;
+   Local<String> str, cname;
    DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
    DBX_GET_ICONTEXT;
    c->dbx_count ++;
@@ -2933,7 +2994,7 @@ void DBX_DBNAME::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int bina
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::classmethod");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    pmeth->binary = binary;
 
@@ -2951,7 +3012,8 @@ void DBX_DBNAME::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int bina
       return;
    }
 
-   dbx_write_char8(isolate, DBX_TO_STRING(args[0]), class_name, pcon->utf8);
+   cname = DBX_TO_STRING(args[0]);
+   dbx_write_char8(isolate, cname, class_name, pcon->utf8);
    if (class_name[0] == '\0') {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The classmethod method takes at least one argument (the class name)", 1)));
       return;
@@ -3020,7 +3082,7 @@ void DBX_DBNAME::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int bina
          args.GetReturnValue().Set(bx);
       }
       else {
-         str = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
+         str = pcon->utf16 ? dbx_new_string16n(isolate, pmeth->output_val.cvalue.buf16_addr, pmeth->output_val.cvalue.len_used) : dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
          args.GetReturnValue().Set(str);
       }
       dbx_request_memory_free(pcon, pmeth, 0);
@@ -3032,6 +3094,15 @@ void DBX_DBNAME::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int bina
    clx->c = c;
    clx->oref =  pmeth->output_val.num.oref;
    strcpy(clx->class_name, class_name);
+   clx->class_name_len = (int) strlen(class_name);
+   if (pcon->utf16) {
+      dbx_write_char16(isolate, cname, clx->class_name16);
+      clx->class_name16_len = (int) dbx_string16_length(isolate, cname);
+   }
+   else {
+      clx->class_name16[0] = 0;
+      clx->class_name16_len = 0;
+   }
 
    dbx_request_memory_free(pcon, pmeth, 0);
    return;
@@ -3079,7 +3150,7 @@ void DBX_DBNAME::SQL(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::sql");
    }
-   pmeth = dbx_request_memory(pcon, 1);
+   pmeth = dbx_request_memory(pcon, 1, 1);
 
    pmeth->argc = args.Length();
 
@@ -3151,7 +3222,7 @@ void DBX_DBNAME::TStart(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::tstart");
    }
-   pmeth = dbx_request_memory(pcon, 1);
+   pmeth = dbx_request_memory(pcon, 0, 1);
 
    DBX_CALLBACK_FUN(js_narg, async);
 
@@ -3163,7 +3234,7 @@ void DBX_DBNAME::TStart(const FunctionCallbackInfo<Value>& args)
 
    for (nx = 0; nx < js_narg; nx ++) {
       str = DBX_TO_STRING(args[nx]);
-      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0);
+      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0, 0);
    }
 
    DBX_DBFUN_START(c, pcon, pmeth);
@@ -3204,7 +3275,7 @@ void DBX_DBNAME::TLevel(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::tlevel");
    }
-   pmeth = dbx_request_memory(pcon, 1);
+   pmeth = dbx_request_memory(pcon, 0, 1);
 
    DBX_CALLBACK_FUN(js_narg, async);
 
@@ -3216,7 +3287,7 @@ void DBX_DBNAME::TLevel(const FunctionCallbackInfo<Value>& args)
 
    for (nx = 0; nx < js_narg; nx ++) {
       str = DBX_TO_STRING(args[nx]);
-      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0);
+      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0, 0);
    }
 
    DBX_DBFUN_START(c, pcon, pmeth);
@@ -3257,7 +3328,7 @@ void DBX_DBNAME::TCommit(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::tcommit");
    }
-   pmeth = dbx_request_memory(pcon, 1);
+   pmeth = dbx_request_memory(pcon, 0, 1);
 
    DBX_CALLBACK_FUN(js_narg, async);
 
@@ -3269,7 +3340,7 @@ void DBX_DBNAME::TCommit(const FunctionCallbackInfo<Value>& args)
 
    for (nx = 0; nx < js_narg; nx ++) {
       str = DBX_TO_STRING(args[nx]);
-      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0);
+      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0, 0);
    }
 
    DBX_DBFUN_START(c, pcon, pmeth);
@@ -3310,7 +3381,7 @@ void DBX_DBNAME::TRollback(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::trollback");
    }
-   pmeth = dbx_request_memory(pcon, 1);
+   pmeth = dbx_request_memory(pcon, 0, 1);
 
    DBX_CALLBACK_FUN(js_narg, async);
 
@@ -3322,7 +3393,7 @@ void DBX_DBNAME::TRollback(const FunctionCallbackInfo<Value>& args)
 
    for (nx = 0; nx < js_narg; nx ++) {
       str = DBX_TO_STRING(args[nx]);
-      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0);
+      dbx_ibuffer_add(pmeth, isolate, nx, str, NULL, 0, 0, 0);
    }
 
    DBX_DBFUN_START(c, pcon, pmeth);
@@ -3510,10 +3581,19 @@ NODE_MODULE_INITIALIZER(Local<Object> exports,
 }
 
 /* v2.1.17 */
-DBXMETH * dbx_request_memory(DBXCON *pcon, short context)
+DBXMETH * dbx_request_memory(DBXCON *pcon, short allow_char16, short context)
 {
-   int n;
+   int n, alloc_char16;
    DBXMETH *pmeth;
+
+   alloc_char16 = 0;
+   if (pcon->utf8 == 2 && allow_char16 && !pcon->net_connection && (pcon->dbtype == DBX_DBTYPE_CACHE || pcon->dbtype == DBX_DBTYPE_IRIS)) {
+      pcon->utf16 = 1; /* Native 16-bit for ISC API */
+      alloc_char16 = 1;
+   }
+   else {
+      pcon->utf16 = 0;
+   }
 
    pmeth = NULL;
    if (context) {
@@ -3521,7 +3601,7 @@ DBXMETH * dbx_request_memory(DBXCON *pcon, short context)
    }
    else {
       if (pcon->use_mutex) {
-         pmeth = dbx_request_memory_alloc(pcon, 0);
+         pmeth = dbx_request_memory_alloc(pcon, alloc_char16, 0);
       }
       else {
          pmeth = (DBXMETH *) pcon->pmeth_base;
@@ -3548,39 +3628,95 @@ DBXMETH * dbx_request_memory(DBXCON *pcon, short context)
 }
 
 
-DBXMETH * dbx_request_memory_alloc(DBXCON *pcon, short context)
+DBXMETH * dbx_request_memory_alloc(DBXCON *pcon, short alloc_char16, short context)
 {
+   int ibuffer_size, obuffer_size;
+   int ibuffer16_size, obuffer16_size;
    DBXMETH *pmeth;
+
+   ibuffer_size = CACHE_MAXSTRLEN;
+   obuffer_size = CACHE_MAXSTRLEN;
+   ibuffer16_size = 0;
+   obuffer16_size = 0;
+   if (alloc_char16 == 2) {
+      ibuffer_size = 256;
+      obuffer_size = 256;
+      ibuffer16_size = 256;
+      obuffer16_size = 256;
+   }
+   else if (alloc_char16 > 0) {
+      ibuffer_size = 256;
+      obuffer_size = 256;
+      ibuffer16_size = CACHE_MAXSTRLEN;
+      obuffer16_size = CACHE_MAXSTRLEN;
+   }
 
    pmeth = (DBXMETH *) dbx_malloc(sizeof(DBXMETH), 0);
    if (!pmeth) {
       return NULL;
    }
+   memset((void *) pmeth, 0, sizeof(DBXMETH));
+   pmeth->output_val.svalue.buf_addr = NULL;
+   pmeth->output_val.cvalue.buf16_addr = NULL;
+   pmeth->ibuffer = NULL;
+   pmeth->ibuffer16 = NULL;
 
-   pmeth->output_val.svalue.buf_addr = (char *) dbx_malloc(32000, 0);
-   if (!pmeth->output_val.svalue.buf_addr) {
-      dbx_free((void *) pmeth, 0);
-      return NULL;
-   }
-
-   memset((void *) pmeth->output_val.svalue.buf_addr, 0, 32000);
-   pmeth->output_val.svalue.len_alloc = 32000;
-   pmeth->output_val.svalue.len_used = 0;
-
-   pmeth->ibuffer = (unsigned char *) dbx_malloc(CACHE_MAXSTRLEN + DBX_IBUFFER_OFFSET, 0);
+   pmeth->ibuffer = (unsigned char *) dbx_malloc(ibuffer_size + DBX_IBUFFER_OFFSET, 0);
    if (!pmeth->ibuffer) {
-      dbx_free((void *) pmeth->output_val.svalue.buf_addr, 0);
-      dbx_free((void *) pmeth, 0);
-      return NULL;
+      goto dbx_request_memory_alloc_error;
    }
-
    memset((void *) pmeth->ibuffer, 0, DBX_IBUFFER_OFFSET);
-   dbx_add_block_size(pmeth->ibuffer + 5, 0, CACHE_MAXSTRLEN, 0, 0);
+   dbx_add_block_size(pmeth->ibuffer + 5, 0, ibuffer_size, 0, 0);
    pmeth->ibuffer += DBX_IBUFFER_OFFSET; /* v1.4.10 */
    pmeth->ibuffer_used = 0;
-   pmeth->ibuffer_size = CACHE_MAXSTRLEN;
+   pmeth->ibuffer_size = ibuffer_size;
+
+   pmeth->output_val.svalue.buf_addr = (char *) dbx_malloc(obuffer_size, 0);
+   if (!pmeth->output_val.svalue.buf_addr) {
+      goto dbx_request_memory_alloc_error;
+   }
+   memset((void *) pmeth->output_val.svalue.buf_addr, 0, obuffer_size);
+   pmeth->output_val.svalue.len_alloc = obuffer_size;
+   pmeth->output_val.svalue.len_used = 0;
+
+   if (alloc_char16) {
+      pmeth->ibuffer16 = (unsigned short *) dbx_malloc((ibuffer16_size + DBX_IBUFFER_OFFSET) * sizeof(unsigned short), 0);
+      if (!pmeth->ibuffer16) {
+         goto dbx_request_memory_alloc_error;
+      }
+      memset((void *) pmeth->ibuffer16, 0, DBX_IBUFFER_OFFSET * sizeof(unsigned short));
+      pmeth->ibuffer16 += DBX_IBUFFER_OFFSET; /* v1.4.10 */
+      pmeth->ibuffer16_used = 0;
+      pmeth->ibuffer16_size = ibuffer16_size;
+
+      pmeth->output_val.cvalue.buf16_addr = (unsigned short *) dbx_malloc(obuffer16_size * sizeof(unsigned short), 0);
+      if (!pmeth->output_val.cvalue.buf16_addr) {
+         goto dbx_request_memory_alloc_error;
+      }
+      memset((void *) pmeth->output_val.cvalue.buf16_addr, 0, obuffer16_size * sizeof(unsigned short));
+      pmeth->output_val.cvalue.len_alloc = obuffer16_size;
+      pmeth->output_val.cvalue.len_used = 0;
+   }
 
    return pmeth;
+
+dbx_request_memory_alloc_error:
+
+   if (!pmeth)
+      return NULL;
+
+   if (pmeth->output_val.svalue.buf_addr)
+      dbx_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+   if (pmeth->output_val.cvalue.buf16_addr)
+      dbx_free((void *) pmeth->output_val.cvalue.buf16_addr, 0);
+   if (pmeth->ibuffer)
+      dbx_free((void *) pmeth->ibuffer, 0);
+   if (pmeth->ibuffer16)
+      dbx_free((void *) pmeth->ibuffer16, 0);
+
+   dbx_free((void *) pmeth, 0);
+
+   return NULL;
 }
 
 
@@ -3597,6 +3733,15 @@ int dbx_request_memory_free(DBXCON *pcon, DBXMETH *pmeth, short context)
       if (pmeth->output_val.svalue.buf_addr) {
          dbx_free((void *) pmeth->output_val.svalue.buf_addr, 0);
       }
+
+      if (pmeth->ibuffer16) {
+         pmeth->ibuffer16 -= DBX_IBUFFER_OFFSET;
+         dbx_free((void *) pmeth->ibuffer16, 0);
+      }
+      if (pmeth->output_val.cvalue.buf16_addr) {
+         dbx_free((void *) pmeth->output_val.cvalue.buf16_addr, 0);
+      }
+
       dbx_free((void *) pmeth, 0);
    }
    return CACHE_SUCCESS;
@@ -3676,6 +3821,13 @@ int dbx_string8_length(v8::Isolate * isolate, v8::Local<v8::String> str, int utf
    }
 }
 
+
+int dbx_string16_length(v8::Isolate * isolate, v8::Local<v8::String> str)
+{
+   return DBX_LENGTH(str);
+}
+
+
 v8::Local<v8::String> dbx_new_string8(v8::Isolate * isolate, char * buffer, int utf8)
 {
    if (utf8) {
@@ -3696,6 +3848,16 @@ v8::Local<v8::String> dbx_new_string8(v8::Isolate * isolate, char * buffer, int 
 }
 
 
+v8::Local<v8::String> dbx_new_string16(v8::Isolate * isolate, unsigned short * buffer)
+{
+#if DBX_NODE_VERSION >= 120000
+   return v8::String::NewFromTwoByte(isolate, (const uint16_t *) buffer, NewStringType::kNormal).ToLocalChecked();
+#else
+   return String::NewFromTwoByte(isolate, (const uint16_t *) buffer);
+#endif
+}
+
+
 v8::Local<v8::String> dbx_new_string8n(v8::Isolate * isolate, char * buffer, unsigned long len, int utf8)
 {
    if (utf8) {
@@ -3712,8 +3874,17 @@ v8::Local<v8::String> dbx_new_string8n(v8::Isolate * isolate, char * buffer, uns
       /* return v8::String::NewFromOneByte(isolate, (uint8_t *) buffer, String::kNormalString, len); */
       return v8::String::NewFromOneByte(isolate, (uint8_t *) buffer, v8::NewStringType::kInternalized, len).ToLocalChecked();
 #endif
-
    }
+}
+
+
+v8::Local<v8::String> dbx_new_string16n(v8::Isolate * isolate, unsigned short * buffer, unsigned long len)
+{
+#if DBX_NODE_VERSION >= 120000
+   return v8::String::NewFromTwoByte(isolate, (const uint16_t *) buffer, NewStringType::kNormal, len).ToLocalChecked();
+#else
+   return String::NewFromTwoByte(isolate, (const uint16_t *) buffer, String::kNormalString, len);
+#endif
 }
 
 
@@ -3728,9 +3899,17 @@ int dbx_write_char8(v8::Isolate * isolate, v8::Local<v8::String> str, char * buf
 }
 
 
-int dbx_ibuffer_add(DBXMETH *pmeth, v8::Isolate * isolate, int argn, v8::Local<v8::String> str, char * buffer, int buffer_len, short context)
+int dbx_write_char16(v8::Isolate * isolate, v8::Local<v8::String> str, unsigned short * buffer)
+{
+   return DBX_WRITE(str, buffer);
+}
+
+
+int dbx_ibuffer_add(DBXMETH *pmeth, v8::Isolate * isolate, int argn, v8::Local<v8::String> str, void * pbuffer, int buffer_len, short char16, short context)
 {
    int len, n, type;
+   char *buffer;
+   unsigned short *buffer16;
    unsigned char *p, *phead;
    char *p1, *p2;
    DBXCON *pcon = pmeth->pcon;
@@ -3739,7 +3918,11 @@ int dbx_ibuffer_add(DBXMETH *pmeth, v8::Isolate * isolate, int argn, v8::Local<v
 __try {
 #endif
 
-   if (buffer)
+   if (pmeth->pcon->utf16 && context != 10) {
+      return dbx_ibuffer16_add(pmeth, isolate, argn, str, pbuffer, buffer_len, char16, context);
+   }
+
+   if (pbuffer)
       len = buffer_len;
    else
       len = dbx_string8_length(isolate, str, pcon->utf8);
@@ -3784,8 +3967,17 @@ __try {
    pmeth->ibuffer_used += 5;
    p = (pmeth->ibuffer + pmeth->ibuffer_used);
 
-   if (buffer) {
-      T_MEMCPY((void *) p, (void *) buffer, (size_t) len); /* 1.4.11 */
+   if (pbuffer) {
+      if (char16) {
+         buffer16 = (unsigned short *) pbuffer;
+         for (n = 0; n < len; n ++) {
+            p[n] = (unsigned char) buffer16[n];
+         }
+      }
+      else {
+         buffer = (char *) pbuffer;
+         T_MEMCPY((void *) p, (void *) buffer, (size_t) len); /* 1.4.11 */
+      }
    }
    else {
       dbx_write_char8(isolate, str, (char *) p, pcon->utf8);
@@ -3850,11 +4042,126 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
 }
 
 
+int dbx_ibuffer16_add(DBXMETH *pmeth, v8::Isolate * isolate, int argn, v8::Local<v8::String> str, void * pbuffer, int buffer_len, short char16, short context)
+{
+   int len, n;
+   char *buffer;
+   unsigned short *buffer16;
+   unsigned short *p;
+   unsigned short *p1, *p2;
+   DBXCON *pcon = pmeth->pcon;
+
+#ifdef _WIN32
+__try {
+#endif
+
+   if (pbuffer)
+      len = buffer_len;
+   else
+      len = dbx_string16_length(isolate, str);
+
+   /* 1.4.11 resize input buffer if necessary */
+
+   if ((pmeth->ibuffer16_used + len + 32) > pmeth->ibuffer16_size) {
+      p = (unsigned short *) dbx_malloc(sizeof(short) * (pmeth->ibuffer16_used + len + CACHE_MAXSTRLEN + DBX_IBUFFER_OFFSET), 301);
+      if (p) {
+         p1 = (unsigned short *) (pmeth->ibuffer16 - DBX_IBUFFER_OFFSET);
+         p2 = (unsigned short *) p;
+
+         memcpy((void *) p, (void *) (pmeth->ibuffer16 - DBX_IBUFFER_OFFSET), (size_t) (pmeth->ibuffer16_used + DBX_IBUFFER_OFFSET) * sizeof(unsigned short));
+         dbx_free((void *) (pmeth->ibuffer16 - DBX_IBUFFER_OFFSET), 301);
+         pmeth->ibuffer16 = (p + DBX_IBUFFER_OFFSET);
+         pmeth->ibuffer16_size = (pmeth->ibuffer16_used + len + CACHE_MAXSTRLEN);
+
+         /* v2.2.22 reset pointers */
+         for (n = 0; n < pmeth->argc; n ++) {
+            pmeth->args[n].cvalue.buf16_addr = (p2 + (pmeth->args[n].cvalue.buf16_addr - p1));
+         }
+      }
+      else {
+         return 0;
+      }
+   }
+   /* phead = (pmeth->ibuffer16 + pmeth->ibuffer16_used); */
+   pmeth->ibuffer16_used += 5;
+   p = (pmeth->ibuffer16 + pmeth->ibuffer16_used);
+
+   if (pbuffer) {
+      if (char16) {
+         buffer16 = (unsigned short *) pbuffer;
+         T_MEMCPY((void *) p, (void *) buffer16, (size_t) len * sizeof(short));
+      }
+      else {
+         buffer = (char *) pbuffer;
+         for (n = 0; n < len; n ++) {
+            p[n] = (unsigned short) buffer[n];
+         }
+      }
+   }
+   else {
+      dbx_write_char16(isolate, str, (unsigned short *) p);
+   }
+   pmeth->ibuffer16_used += len;
+   /* type = pmeth->args[argn].type; */
+   pmeth->args[argn].type = DBX_DTYPE_STR; /* Bug fix v1.3.7 */
+
+/*
+   if (context == 2 || pcon->net_connection) {
+      dbx_add_block_size(phead, 0, len, pmeth->args[argn].sort, type);
+   }
+*/
+   pmeth->args[argn].cvalue.buf16_addr = (unsigned short *) p;
+   pmeth->args[argn].cvalue.len_alloc = len;
+   pmeth->args[argn].cvalue.len_used = len;
+   pmeth->args[argn].csize = pmeth->ibuffer16_used;
+
+   if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
+      if (argn == 0 && context == 0 && pmeth->args[argn].svalue.buf_addr[0] != 94) { /* 94 == '^' */
+         pmeth->args[argn].cvalue.buf16_addr = (unsigned short *) (p - 1);
+         pmeth->args[argn].cvalue.len_used ++;
+         pmeth->args[argn].cvalue.len_alloc ++;
+         pmeth->args[argn].cvalue.buf16_addr[0] = 94;
+      }
+   }
+   else {
+      if (pmeth->lock && argn == 0 && context == 0 && pmeth->args[argn].cvalue.buf16_addr[0] != 94) {
+         pmeth->args[argn].cvalue.buf16_addr = (unsigned short *) (p - 1);
+         pmeth->args[argn].cvalue.len_used ++;
+         pmeth->args[argn].cvalue.len_alloc ++;
+         pmeth->args[argn].cvalue.buf16_addr[0] = 94;
+      }
+   }
+
+   return len;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_ibuffer16_add: %x", code);
+      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
+}
+
+
 int dbx_global_reset(const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolate * isolate, DBXCON *pcon, DBXMETH *pmeth, void *pgx, int argc_offset, short context)
 {
    v8::Local<v8::Context> icontext = isolate->GetCurrentContext();
-   int n, len, otype;
+   int n, len, otype, global_name_len, global_name16_len;
    char global_name[256], *p;
+   unsigned short global_name16[256];
    DBXVAL *pval, *pvalp;
    v8::Local<v8::Object> obj;
    v8::Local<v8::String> str;
@@ -3868,15 +4175,25 @@ __try {
       gx->c->LogFunction(gx->c, args, NULL, (char *) "dbx_global_reset");
    }
 
-   dbx_write_char8(isolate, DBX_TO_STRING(args[argc_offset]), global_name, pcon->utf8);
-   if (global_name[0] == '\0') {
+   str = DBX_TO_STRING(args[argc_offset]);
+   global_name16_len = 0;
+   global_name_len = dbx_string8_length(isolate, str, pcon->utf8);
+   dbx_write_char8(isolate, str, global_name, pcon->utf8);
+   if (global_name_len == 0) {
       return -1;
+   }
+   if (pcon->utf16) {
+      global_name16_len = dbx_string16_length(isolate, str);
+      dbx_write_char16(isolate, str, global_name16);
    }
 
    pval = gx->pkey;
    while (pval) {
       pvalp = pval;
       pval = pval->pnext;
+      if (pvalp->cvalue.buf16_addr) {
+         dbx_free((void *) pvalp->cvalue.buf16_addr, 0);
+      }
       dbx_free((void *) pvalp, 0);
    }
    gx->pkey = NULL;
@@ -3888,16 +4205,39 @@ __try {
       else {
          gx->global_name[0] = '^';
          T_STRCPY(gx->global_name + 1, _dbxso(gx->global_name), global_name);
+         global_name_len ++;
+      }
+      if (pcon->utf16) {
+         if (global_name16[0] == 94) {
+            T_MEMCPY((void *) gx->global_name16, (void *) global_name16, (size_t) global_name16_len * sizeof(short));
+         }
+         else {
+            gx->global_name16[0] = 94;
+            T_MEMCPY((void *) (gx->global_name16 + 1), (void *) global_name16, (size_t) global_name16_len * sizeof(short));
+            global_name16_len ++;
+         }
       }
    }
    else {
       if (global_name[0] == '^') {
+         global_name_len --;
          T_STRCPY(gx->global_name, _dbxso(gx->global_name), global_name + 1);
       }
       else {
          T_STRCPY(gx->global_name, _dbxso(gx->global_name), global_name);
       }
+      if (pcon->utf16) {
+         if (global_name16[0] == 94) {
+            global_name16_len --;
+            T_MEMCPY((void *) gx->global_name16, (void *) (global_name16 + 1), (size_t) global_name16_len * sizeof(short));
+         }
+         else {
+            T_MEMCPY((void *) gx->global_name16, (void *) global_name16, (size_t) global_name16_len * sizeof(short));
+         }
+      }
    }
+   gx->global_name_len = global_name_len;
+   gx->global_name16_len = global_name16_len;
 
    pvalp = NULL;
    for (n = (argc_offset + 1); n < pmeth->argc; n ++) {
@@ -3920,13 +4260,27 @@ __try {
          }
          else {
             str = DBX_TO_STRING(args[n]);
-            len = (int) dbx_string8_length(isolate, str, 0);
-            pval = (DBXVAL *) dbx_malloc(sizeof(DBXVAL) + len + 32, 0);
-            pval->type = DBX_DTYPE_STR;
-            pval->svalue.buf_addr = ((char *) pval) + sizeof(DBXVAL);
-            dbx_write_char8(isolate, str, pval->svalue.buf_addr, 1);
-            pval->svalue.len_alloc = len + 32;
-            pval->svalue.len_used = len;
+            if (pcon->utf16) {
+               len = (int) dbx_string16_length(isolate, str);
+               pval = (DBXVAL *) dbx_malloc(sizeof(DBXVAL) + len + 32, 0);
+               pval->svalue.buf_addr = NULL;
+               pval->cvalue.buf16_addr = (unsigned short *) dbx_malloc(sizeof(unsigned short) * (len + 32), 0);
+               pval->type = DBX_DTYPE_STR16;
+               pval->svalue.buf_addr = NULL;
+               dbx_write_char16(isolate, str, pval->cvalue.buf16_addr);
+               pval->cvalue.len_alloc = len + 32;
+               pval->cvalue.len_used = len;
+            }
+            else {
+               len = (int) dbx_string8_length(isolate, str, 0);
+               pval = (DBXVAL *) dbx_malloc(sizeof(DBXVAL) + len + 32, 0);
+               pval->cvalue.buf16_addr = NULL;
+               pval->type = DBX_DTYPE_STR;
+               pval->svalue.buf_addr = ((char *) pval) + sizeof(DBXVAL);
+               dbx_write_char8(isolate, str, pval->svalue.buf_addr, 1);
+               pval->svalue.len_alloc = len + 32;
+               pval->svalue.len_used = len;
+            }
          }
       }
       if (pvalp) {
@@ -3988,8 +4342,9 @@ int dbx_cursor_init(void *pcx)
 int dbx_cursor_reset(const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolate * isolate, DBXCON *pcon, DBXMETH *pmeth, void *pcx, int argc_offset, short context)
 {
    v8::Local<v8::Context> icontext = isolate->GetCurrentContext();
-   int n, len;
+   int n, len, global_name_len, global_name16_len;
    char global_name[256], buffer[256];
+   unsigned short global_name16[256];
    DBXSQL *psql;
    v8::Local<v8::Object> obj;
    v8::Local<v8::String> key;
@@ -3999,7 +4354,6 @@ int dbx_cursor_reset(const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolat
 #ifdef _WIN32
 __try {
 #endif
-
 
    if (pcon->log_functions && cx && cx->c) {
       cx->c->LogFunction(cx->c, args, NULL, (char *) "dbx_cursor_reset");
@@ -4065,10 +4419,10 @@ __try {
    }
 
    if (!cx->pqr_prev) {
-      cx->pqr_prev = dbx_alloc_dbxqr(NULL, 0, 0);
+      cx->pqr_prev = dbx_alloc_dbxqr(NULL, 0, pcon->utf16, 0);
    }
    if (!cx->pqr_next) {
-      cx->pqr_next = dbx_alloc_dbxqr(NULL, 0, 0);
+      cx->pqr_next = dbx_alloc_dbxqr(NULL, 0, pcon->utf16, 0);
    }
    if (!cx->data.buf_addr) {
       cx->data.buf_addr = (char *) dbx_malloc(CACHE_MAXSTRLEN, 0);
@@ -4076,9 +4430,17 @@ __try {
       cx->data.len_used = 0;
    }
 
+   global_name_len = 0;
+   global_name16_len = 0;
    key = dbx_new_string8(isolate, (char *) "global", 1);
    if (DBX_GET(obj, key)->IsString()) {
-      dbx_write_char8(isolate, DBX_TO_STRING(DBX_GET(obj, key)), global_name, pcon->utf8);
+      value = DBX_TO_STRING(DBX_GET(obj, key));
+      global_name_len = dbx_string8_length(isolate, value, pcon->utf8);
+      dbx_write_char8(isolate, value, global_name, pcon->utf8);
+      if (pcon->utf16) {
+         global_name16_len = dbx_string16_length(isolate, value);
+         dbx_write_char16(isolate, value, global_name16);
+      }
    }
    else {
       return -1;
@@ -4091,16 +4453,30 @@ __try {
       else {
          cx->global_name[0] = '^';
          T_STRCPY(cx->global_name + 1, _dbxso(cx->global_name), global_name);
+         global_name_len ++;
       }
    }
    else {
       if (global_name[0] == '^') {
+         global_name_len --;
          T_STRCPY(cx->global_name, _dbxso(cx->global_name), global_name + 1);
       }
       else {
          T_STRCPY(cx->global_name, _dbxso(cx->global_name), global_name);
       }
+      if (pcon->utf16) {
+         if (global_name16[0] == 94) {
+            global_name16_len --;
+            T_MEMCPY((void *) cx->global_name16, (void *) (global_name16 + 1), sizeof(short) * global_name16_len);
+         }
+         else {
+            T_MEMCPY((void *) cx->global_name16, (void *) global_name16, sizeof(short) * global_name16_len);
+         }
+      }
    }
+
+   cx->global_name_len = global_name_len;
+   cx->global_name16_len = global_name16_len;
 
 /*
 
@@ -4117,8 +4493,8 @@ __try {
       for (n = 0; n < cx->pqr_prev->keyn; n ++) {
          value = DBX_TO_STRING(DBX_GET(a, n));
          len = (int) dbx_string8_length(isolate, value, 0);
-         dbx_write_char8(isolate, value, cx->pqr_prev->key[n].buf_addr, 1);
-         cx->pqr_prev->key[n].len_used = len;
+         dbx_write_char8(isolate, value, cx->pqr_prev->ykeys[n].buf_addr, 1);
+         cx->pqr_prev->ykeys[n].len_used = len;
       }
    }
 
@@ -4130,8 +4506,14 @@ __try {
 */
    strcpy(cx->pqr_next->global_name.buf_addr, cx->global_name);
    strcpy(cx->pqr_prev->global_name.buf_addr, cx->global_name);
-   cx->pqr_prev->global_name.len_used = (int) strlen((char *) cx->pqr_prev->global_name.buf_addr);
-   cx->pqr_next->global_name.len_used =  cx->pqr_prev->global_name.len_used;
+   cx->pqr_prev->global_name.len_used = (int) cx->global_name_len;
+   cx->pqr_next->global_name.len_used = (int) cx->global_name_len;
+   if (pcon->utf16) {
+      T_MEMCPY((void *) cx->pqr_next->global_name16.cvalue.buf16_addr, (void *) cx->global_name16, (size_t) (cx->global_name16_len * sizeof(short)));
+      T_MEMCPY((void *) cx->pqr_prev->global_name16.cvalue.buf16_addr, (void *) cx->global_name16, (size_t) (cx->global_name16_len * sizeof(short)));
+      cx->pqr_prev->global_name16.cvalue.len_used = (int) cx->global_name16_len;
+      cx->pqr_next->global_name16.cvalue.len_used = (int) cx->global_name16_len;
+   }
    cx->pqr_prev->keyn = 0;
    key = dbx_new_string8(isolate, (char *) "key", 1);
    if (DBX_GET(obj, key)->IsArray()) {
@@ -4139,9 +4521,19 @@ __try {
       cx->pqr_prev->keyn = (int) a->Length();
       for (n = 0; n < cx->pqr_prev->keyn; n ++) {
          value = DBX_TO_STRING(DBX_GET(a, n));
-         len = (int) dbx_string8_length(isolate, value, 0);
-         dbx_write_char8(isolate, value, cx->pqr_prev->key[n].buf_addr, 1);
-         cx->pqr_prev->key[n].len_used = len;
+         if (pcon->utf16) {
+            len = (int) dbx_string16_length(isolate, value);
+            dbx_write_char16(isolate, value, cx->pqr_prev->keys[n].cvalue.buf16_addr);
+            cx->pqr_prev->keys[n].cvalue.len_used = len;
+            cx->pqr_prev->keys[n].type = DBX_DTYPE_STR16;
+         }
+         else {
+            len = (int) dbx_string8_length(isolate, value, 0);
+            dbx_write_char8(isolate, value, cx->pqr_prev->ykeys[n].buf_addr, 1);
+            cx->pqr_prev->ykeys[n].len_used = len;
+            cx->pqr_prev->keys[n].svalue.len_used = len;
+            cx->pqr_prev->keys[n].type = DBX_DTYPE_STR8;
+         }
       }
    }
 
@@ -4456,7 +4848,7 @@ __try {
       goto isc_load_library_exit;
    }
    sprintf(fun, "%sPushStrW", pcon->p_isc_so->funprfx);
-   pcon->p_isc_so->p_CachePushStrW = (int (*) (int, short *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   pcon->p_isc_so->p_CachePushStrW = (int (*) (int, unsigned short *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
    if (!pcon->p_isc_so->p_CachePushStrW) {
       sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
       goto isc_load_library_exit;
@@ -4471,7 +4863,7 @@ __try {
       goto isc_load_library_exit;
    }
    sprintf(fun, "%sPopStrW", pcon->p_isc_so->funprfx);
-   pcon->p_isc_so->p_CachePopStrW = (int (*) (int *, short **)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   pcon->p_isc_so->p_CachePopStrW = (int (*) (int *, unsigned short **)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
    if (!pcon->p_isc_so->p_CachePopStrW) {
       sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
       goto isc_load_library_exit;
@@ -4538,6 +4930,12 @@ __try {
    sprintf(fun, "%sPushGlobal", pcon->p_isc_so->funprfx);
    pcon->p_isc_so->p_CachePushGlobal = (int (*) (int, const Callin_char_t *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
    if (!pcon->p_isc_so->p_CachePushGlobal) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
+   sprintf(fun, "%sPushGlobalW", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushGlobalW = (int (*) (int, const unsigned short *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePushGlobalW) {
       sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
       goto isc_load_library_exit;
    }
@@ -4619,9 +5017,17 @@ __try {
       sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
       goto isc_load_library_exit;
    }
+   sprintf(fun, "%sPushLockW", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushLockW = (int (*) (int, const unsigned short *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   if (!pcon->p_isc_so->p_CachePushLockW) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_isc_so->dbname, pcon->p_isc_so->libnam, fun);
+      goto isc_load_library_exit;
+   }
 
    sprintf(fun, "%sAddGlobal", pcon->p_isc_so->funprfx);
    pcon->p_isc_so->p_CacheAddGlobal = (int (*) (int, const Callin_char_t *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sAddGlobalW", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheAddGlobalW = (int (*) (int, const unsigned short *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
    sprintf(fun, "%sAddGlobalDescriptor", pcon->p_isc_so->funprfx);
    pcon->p_isc_so->p_CacheAddGlobalDescriptor = (int (*) (int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
    sprintf(fun, "%sAddSSVN", pcon->p_isc_so->funprfx);
@@ -4637,6 +5043,8 @@ __try {
 
    sprintf(fun, "%sPushFunc", pcon->p_isc_so->funprfx);
    pcon->p_isc_so->p_CachePushFunc = (int (*) (unsigned int *, int, const Callin_char_t *, int, const Callin_char_t *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sPushFuncW", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushFuncW = (int (*) (unsigned int *, int, const unsigned short *, int, const unsigned short *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
    sprintf(fun, "%sExtFun", pcon->p_isc_so->funprfx);
    pcon->p_isc_so->p_CacheExtFun = (int (*) (unsigned int, int)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
    sprintf(fun, "%sPushRtn", pcon->p_isc_so->funprfx);
@@ -4663,10 +5071,14 @@ __try {
    pcon->p_isc_so->p_CacheInvokeMethod = (int (*) (int narg)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
    sprintf(fun, "%sPushMethod", pcon->p_isc_so->funprfx);
    pcon->p_isc_so->p_CachePushMethod = (int (*) (unsigned int oref, int mlen, const Callin_char_t * mptr, int flg)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sPushMethodW", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushMethodW = (int (*) (unsigned int oref, int mlen, const unsigned short * mptr, int flg)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
    sprintf(fun, "%sInvokeClassMethod", pcon->p_isc_so->funprfx);
    pcon->p_isc_so->p_CacheInvokeClassMethod = (int (*) (int narg)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
    sprintf(fun, "%sPushClassMethod", pcon->p_isc_so->funprfx);
    pcon->p_isc_so->p_CachePushClassMethod = (int (*) (int clen, const Callin_char_t * cptr, int mlen, const Callin_char_t * mptr, int flg)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sPushClassMethodW", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushClassMethodW = (int (*) (int clen, const unsigned short * cptr, int mlen, const unsigned short * mptr, int flg)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
 
    sprintf(fun, "%sGetProperty", pcon->p_isc_so->funprfx);
    pcon->p_isc_so->p_CacheGetProperty = (int (*) (void)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
@@ -4674,6 +5086,8 @@ __try {
    pcon->p_isc_so->p_CacheSetProperty = (int (*) (void)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
    sprintf(fun, "%sPushProperty", pcon->p_isc_so->funprfx);
    pcon->p_isc_so->p_CachePushProperty = (int (*) (unsigned int oref, int plen, const Callin_char_t * pptr)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sPushPropertyW", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CachePushPropertyW = (int (*) (unsigned int oref, int plen, const unsigned short * pptr)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
 
    if (pcon->p_isc_so->p_CacheCloseOref && pcon->p_isc_so->p_CacheIncrementCountOref && pcon->p_isc_so->p_CachePopOref && pcon->p_isc_so->p_CachePushOref
          && pcon->p_isc_so->p_CacheInvokeMethod && pcon->p_isc_so->p_CachePushMethod && pcon->p_isc_so->p_CacheInvokeClassMethod && pcon->p_isc_so->p_CachePushClassMethod
@@ -5242,6 +5656,7 @@ int isc_pop_value(DBXMETH *pmeth, DBXVAL *value, int required_type)
    int rc, ex, ctype;
    unsigned int n, max, len;
    char *pstr, *p, *outstr;
+   unsigned short *pstr16, *p16, *outstr16;
    CACHE_EXSTR zstr;
    DBXCON *pcon = pmeth->pcon;
 
@@ -5267,6 +5682,13 @@ __try {
          value->type = DBX_DTYPE_OREF;
          sprintf((char *) value->svalue.buf_addr, "%d", value->num.oref);
          value->svalue.len_used = (int) strlen((char *) value->svalue.buf_addr);
+         if (pcon->utf16) {
+            for (n = 0; n < value->svalue.len_used; n ++) {
+               value->cvalue.buf16_addr[n] = value->svalue.buf_addr[n];
+            }
+            value->cvalue.buf16_addr[value->svalue.len_used] = 0;
+            value->cvalue.len_used = value->svalue.len_used;
+         }
          return rc;
       }
       else if (ctype == CACHE_INT) {
@@ -5274,6 +5696,13 @@ __try {
          value->type = DBX_DTYPE_INT;
          sprintf(value->svalue.buf_addr, "%d", value->num.int32);
          value->svalue.len_used = (int) strlen(value->svalue.buf_addr);
+         if (pcon->utf16) {
+            for (n = 0; n < value->svalue.len_used; n ++) {
+               value->cvalue.buf16_addr[n] = value->svalue.buf_addr[n];
+            }
+            value->cvalue.buf16_addr[value->svalue.len_used] = 0;
+            value->cvalue.len_used = value->svalue.len_used;
+         }
          return rc;
       }
    }
@@ -5282,12 +5711,22 @@ __try {
    }
 
    if (ex) {
-      rc = pcon->p_isc_so->p_CachePopExStr(&zstr);
-      len = zstr.len;
-      outstr = (char *) zstr.str.ch;
+      if (pcon->utf16) {
+         rc = pcon->p_isc_so->p_CachePopExStrW(&zstr);
+         len = zstr.len;
+         outstr16 = (unsigned short *) zstr.str.wch;
+      }
+      else {
+         rc = pcon->p_isc_so->p_CachePopExStr(&zstr);
+         len = zstr.len;
+         outstr = (char *) zstr.str.ch;
+      }
    }
    else {
-      rc = pcon->p_isc_so->p_CachePopStr((int *) &len, (Callin_char_t **) &outstr);
+      if (pcon->utf16)
+         rc = pcon->p_isc_so->p_CachePopStrW((int *) &len, (unsigned short **) &outstr16);
+      else
+         rc = pcon->p_isc_so->p_CachePopStr((int *) &len, (Callin_char_t **) &outstr);
    }
 
    if (rc != CACHE_SUCCESS) {
@@ -5300,6 +5739,34 @@ __try {
    }
 
    max = 0;
+
+   if (pcon->utf16) {
+      if (value->cvalue.len_alloc > 2) {
+         max = (value->cvalue.len_alloc - 2);
+      }
+
+      pstr16 = (unsigned short *) value->cvalue.buf16_addr;
+      if (len >= max) {
+         p16 = (unsigned short *) dbx_malloc(sizeof(unsigned short) * (len + 2), 301);
+         if (p16) {
+            if (value->cvalue.buf16_addr) {
+               dbx_free((void *) value->cvalue.buf16_addr, 301);
+            }
+            value->cvalue.buf16_addr = (unsigned short *) p16;
+            value->cvalue.len_alloc = len;
+            pstr16 = (unsigned short *) value->cvalue.buf16_addr;
+            max = len;
+         }
+      }
+      for (n = 0; n < len; n ++) {
+         if (n > max)
+            break;
+         pstr16[n] = (unsigned short) outstr16[n];
+      }
+      pstr16[n] = '\0';
+      value->cvalue.len_used = n;
+   }
+   else {
    if (value->svalue.len_alloc > 2) {
       max = (value->svalue.len_alloc - 2);
    }
@@ -5323,8 +5790,8 @@ __try {
       pstr[n] = (char) outstr[n];
    }
    pstr[n] = '\0';
-
    value->svalue.len_used = n;
+   }
 
    if (ex) {
       pcon->p_isc_so->p_CacheExStrKill(&zstr);
@@ -6885,21 +7352,41 @@ __try {
    }
    else {
       if (pmeth->args[n].svalue.len_used < CACHE_MAXSTRLEN) {
-         rc = pcon->p_isc_so->p_CachePushStr(pmeth->args[n].svalue.len_used, (Callin_char_t *) pmeth->args[n].svalue.buf_addr);
+         if (pcon->utf16)
+            rc = pcon->p_isc_so->p_CachePushStrW(pmeth->args[n].cvalue.len_used, (unsigned short *) pmeth->args[n].cvalue.buf16_addr);
+         else
+            rc = pcon->p_isc_so->p_CachePushStr(pmeth->args[n].svalue.len_used, (Callin_char_t *) pmeth->args[n].svalue.buf_addr);
       }
       else {
-         pmeth->args[n].cvalue.pstr = (void *) pcon->p_isc_so->p_CacheExStrNew((CACHE_EXSTRP) &(pmeth->args[n].cvalue.zstr), pmeth->args[n].svalue.len_used + 1);
-         if (pmeth->args[n].cvalue.pstr) { /* v2.2.22 */
-            for (ne = 0; ne < pmeth->args[n].svalue.len_used; ne ++) {
-               pmeth->args[n].cvalue.zstr.str.ch[ne] = (char) pmeth->args[n].svalue.buf_addr[ne];
-            }
-            pmeth->args[n].cvalue.zstr.str.ch[ne] = (char) 0;
-            pmeth->args[n].cvalue.zstr.len = pmeth->args[n].svalue.len_used;
+         if (pcon->utf16) {
+            pmeth->args[n].cvalue.pstr = (void *) pcon->p_isc_so->p_CacheExStrNewW((CACHE_EXSTRP) &(pmeth->args[n].cvalue.zstr), pmeth->args[n].cvalue.len_used + 1);
+            if (pmeth->args[n].cvalue.pstr) { /* v2.2.22 */
+               for (ne = 0; ne < pmeth->args[n].cvalue.len_used; ne ++) {
+                  pmeth->args[n].cvalue.zstr.str.wch[ne] = (unsigned short) pmeth->args[n].cvalue.buf16_addr[ne];
+               }
+               pmeth->args[n].cvalue.zstr.str.wch[ne] = (char) 0;
+               pmeth->args[n].cvalue.zstr.len = pmeth->args[n].cvalue.len_used;
 
-            rc = pcon->p_isc_so->p_CachePushExStr((CACHE_EXSTRP) &(pmeth->args[n].cvalue.zstr));
+               rc = pcon->p_isc_so->p_CachePushExStrW((CACHE_EXSTRP) &(pmeth->args[n].cvalue.zstr));
+            }
+            else {
+               rc = CACHE_FAILURE;
+            }
          }
          else {
-            rc = CACHE_FAILURE;
+            pmeth->args[n].cvalue.pstr = (void *) pcon->p_isc_so->p_CacheExStrNew((CACHE_EXSTRP) &(pmeth->args[n].cvalue.zstr), pmeth->args[n].svalue.len_used + 1);
+            if (pmeth->args[n].cvalue.pstr) { /* v2.2.22 */
+               for (ne = 0; ne < pmeth->args[n].svalue.len_used; ne ++) {
+                  pmeth->args[n].cvalue.zstr.str.ch[ne] = (char) pmeth->args[n].svalue.buf_addr[ne];
+               }
+               pmeth->args[n].cvalue.zstr.str.ch[ne] = (char) 0;
+               pmeth->args[n].cvalue.zstr.len = pmeth->args[n].svalue.len_used;
+
+               rc = pcon->p_isc_so->p_CachePushExStr((CACHE_EXSTRP) &(pmeth->args[n].cvalue.zstr));
+            }
+            else {
+               rc = CACHE_FAILURE;
+            }
          }
       }
    }
@@ -6952,13 +7439,21 @@ __try {
       if (n == 0) {
          if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
             if (pmeth->lock) {
-               rc = pcon->p_isc_so->p_CachePushLock((int) pmeth->args[n].svalue.len_used, (Callin_char_t *) pmeth->args[n].svalue.buf_addr);
+               rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushLockW((int) pmeth->args[n].cvalue.len_used, (unsigned short *) pmeth->args[n].cvalue.buf16_addr) : pcon->p_isc_so->p_CachePushLock((int) pmeth->args[n].svalue.len_used, (Callin_char_t *) pmeth->args[n].svalue.buf_addr);
             }
             else {
-               if (pmeth->args[n].svalue.buf_addr[0] == '^')
-                  rc = pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[n].svalue.len_used - 1, (Callin_char_t *) pmeth->args[n].svalue.buf_addr + 1);
-               else
-                  rc = pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[n].svalue.len_used, (Callin_char_t *) pmeth->args[n].svalue.buf_addr);
+               if (pcon->utf16) {
+                  if (pmeth->args[n].cvalue.buf16_addr[0] == 94)
+                     rc = pcon->p_isc_so->p_CachePushGlobalW((int) pmeth->args[n].cvalue.len_used - 1, (unsigned short *) pmeth->args[n].cvalue.buf16_addr + 1);
+                  else
+                     rc = pcon->p_isc_so->p_CachePushGlobalW((int) pmeth->args[n].cvalue.len_used, (unsigned short *) pmeth->args[n].cvalue.buf16_addr);
+               }
+               else {
+                  if (pmeth->args[n].svalue.buf_addr[0] == '^')
+                     rc = pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[n].svalue.len_used - 1, (Callin_char_t *) pmeth->args[n].svalue.buf_addr + 1);
+                  else
+                     pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[n].svalue.len_used, (Callin_char_t *) pmeth->args[n].svalue.buf_addr);
+               }
             }
          }
          continue;
@@ -7097,6 +7592,7 @@ __try {
       isc_cleanup(pmeth);
    }
 
+   pcon->utf16 = 0;
    if (rc == CACHE_SUCCESS) {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &rc, DBX_DTYPE_INT);
    }
@@ -7166,6 +7662,7 @@ __try {
       isc_cleanup(pmeth);
    }
 
+   pcon->utf16 = 0;
    if (rc == CACHE_SUCCESS) {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &n, DBX_DTYPE_INT);
    }
@@ -7236,6 +7733,7 @@ __try {
       isc_cleanup(pmeth);
    }
 
+   pcon->utf16 = 0;
    if (rc == CACHE_SUCCESS) {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &n, DBX_DTYPE_INT);
    }
@@ -7435,6 +7933,7 @@ __try {
       isc_cleanup(pmeth);
    }
 
+   pcon->utf16 = 0;
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
    }
@@ -7528,6 +8027,7 @@ __try {
       isc_cleanup(pmeth);
    }
 
+   pcon->utf16 = 0;
    if (rc == CACHE_SUCCESS) {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &retval, DBX_DTYPE_INT);
    }
@@ -7604,6 +8104,7 @@ __try {
       isc_cleanup(pmeth);
    }
 
+   pcon->utf16 = 0;
    if (rc == CACHE_SUCCESS) {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &retval, DBX_DTYPE_INT);
    }
@@ -7779,16 +8280,32 @@ __try {
       if (pmeth->args[n].sort == DBX_DSORT_GLOBAL) {
          if (n > 0) {
             rc = pcon->p_isc_so->p_CacheAddGlobalDescriptor(narg);
-            if (pmeth->args[n].svalue.buf_addr[n] == '^')
-               rc = pcon->p_isc_so->p_CacheAddGlobal((int) pmeth->args[n].svalue.len_used - 1, (Callin_char_t *) pmeth->args[n].svalue.buf_addr + 1);
-            else
-               rc = pcon->p_isc_so->p_CacheAddGlobal((int) pmeth->args[n].svalue.len_used, (Callin_char_t *) pmeth->args[n].svalue.buf_addr);
+            if (pcon->utf16) {
+               if (pmeth->args[n].cvalue.buf16_addr[n] == 94)
+                  rc = pcon->p_isc_so->p_CacheAddGlobalW((int) pmeth->args[n].cvalue.len_used - 1, (unsigned short *) pmeth->args[n].cvalue.buf16_addr + 1);
+               else
+                  rc = pcon->p_isc_so->p_CacheAddGlobalW((int) pmeth->args[n].cvalue.len_used, (unsigned short *) pmeth->args[n].cvalue.buf16_addr);
+            }
+            else {
+               if (pmeth->args[n].svalue.buf_addr[n] == '^')
+                  rc = pcon->p_isc_so->p_CacheAddGlobal((int) pmeth->args[n].svalue.len_used - 1, (Callin_char_t *) pmeth->args[n].svalue.buf_addr + 1);
+               else
+                  rc = pcon->p_isc_so->p_CacheAddGlobal((int) pmeth->args[n].svalue.len_used, (Callin_char_t *) pmeth->args[n].svalue.buf_addr);
+            }
          }
          else {
-            if (pmeth->args[n].svalue.buf_addr[n] == '^')
-               rc = pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[n].svalue.len_used - 1, (Callin_char_t *) pmeth->args[n].svalue.buf_addr + 1);
-            else
-               rc = pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[n].svalue.len_used, (Callin_char_t *) pmeth->args[n].svalue.buf_addr);
+            if (pcon->utf16) {
+               if (pmeth->args[n].cvalue.buf16_addr[0] == 94)
+                  rc = pcon->p_isc_so->p_CachePushGlobalW((int) pmeth->args[n].cvalue.len_used - 1, (unsigned short *) pmeth->args[n].cvalue.buf16_addr + 1);
+               else
+                  rc = pcon->p_isc_so->p_CachePushGlobalW((int) pmeth->args[n].cvalue.len_used, (unsigned short *) pmeth->args[n].cvalue.buf16_addr);
+            }
+            else {
+               if (pmeth->args[n].svalue.buf_addr[n] == '^')
+                  rc = pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[n].svalue.len_used - 1, (Callin_char_t *) pmeth->args[n].svalue.buf_addr + 1);
+               else
+                  rc = pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[n].svalue.len_used, (Callin_char_t *) pmeth->args[n].svalue.buf_addr);
+            }
          }
          narg = 0;
       }
@@ -7809,6 +8326,7 @@ __try {
    rc = pcon->p_isc_so->p_CacheMerge();
    isc_cleanup(pmeth);
 
+   pcon->utf16 = 0;
    if (rc == CACHE_SUCCESS) {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &rc, DBX_DTYPE_INT);
    }
@@ -8131,20 +8649,42 @@ __try {
    for (n = 0; n < pmeth->argc; n ++) {
 
       if (n == 0) {
-         T_STRNCPY(pfun->buffer, _dbxso(pfun->buffer), pmeth->args[n].svalue.buf_addr, pmeth->args[n].svalue.len_used);
-         pfun->buffer[pmeth->args[n].svalue.len_used] = '\0';
-         pfun->label = pfun->buffer;
-         pfun->routine = strstr(pfun->buffer, "^");
-         *pfun->routine = '\0';
-         pfun->routine ++;
-         pfun->label_len = (int) strlen(pfun->label);
-         pfun->routine_len = (int) strlen(pfun->routine);
+         if (pcon->utf16) {
+            unsigned int n16, nc;
 
+            pfun->label = NULL;
+            pfun->routine = NULL;
+            nc = 0;
+            for (n16 = 0; n16 < pmeth->args[n].cvalue.len_used; n16 ++) {
+               pfun->buffer.str16[n16] = pmeth->args[n].cvalue.buf16_addr[n16];
+               if (pfun->buffer.str16[n16] == 94) {
+                  nc = n16;
+               }
+            }
+            pfun->buffer.str16[pmeth->args[n].cvalue.len_used] = 0;
+            pfun->label16 = pfun->buffer.str16;
+            pfun->routine16 = pfun->buffer.str16 + nc + 1;
+            pfun->buffer.str16[nc] = 0;
+            pfun->label_len = (int) nc;
+            pfun->routine_len = (int) (pmeth->args[n].cvalue.len_used - (nc + 1));
+         }
+         else {
+            pfun->label16 = NULL;
+            pfun->routine16 = NULL;
+            T_STRNCPY(pfun->buffer.str8, _dbxso(pfun->buffer), pmeth->args[n].svalue.buf_addr, pmeth->args[n].svalue.len_used);
+            pfun->buffer.str8[pmeth->args[n].svalue.len_used] = '\0';
+            pfun->label = pfun->buffer.str8;
+            pfun->routine = strstr(pfun->buffer.str8, "^");
+            *pfun->routine = '\0';
+            pfun->routine ++;
+            pfun->label_len = (int) strlen(pfun->label);
+            pfun->routine_len = (int) strlen(pfun->routine);
+         }
          if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
             break;
          }
 
-         rc = pcon->p_isc_so->p_CachePushFunc(&(pfun->rflag), (int) pfun->label_len, (const Callin_char_t *) pfun->label, (int) pfun->routine_len, (const Callin_char_t *) pfun->routine);
+         rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushFuncW(&(pfun->rflag), (int) pfun->label_len, (const unsigned short *) pfun->label16, (int) pfun->routine_len, (const unsigned short *) pfun->routine16) : pcon->p_isc_so->p_CachePushFunc(&(pfun->rflag), (int) pfun->label_len, (const Callin_char_t *) pfun->label, (int) pfun->routine_len, (const Callin_char_t *) pfun->routine);
       }
       else {
          if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
@@ -8260,16 +8800,20 @@ __try {
       }
       else if (n == 1) {
          if (optype == 0) { /* classmethod from mclass */
-            rc = pcon->p_isc_so->p_CachePushClassMethod((int) pmeth->args[0].svalue.len_used, (Callin_char_t *) pmeth->args[0].svalue.buf_addr, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr, 1);
+            rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushClassMethodW((int) pmeth->args[0].cvalue.len_used, (unsigned short *) pmeth->args[0].cvalue.buf16_addr, (int) pmeth->args[1].cvalue.len_used, (unsigned short *) pmeth->args[1].cvalue.buf16_addr, 1)
+                             : pcon->p_isc_so->p_CachePushClassMethod((int) pmeth->args[0].svalue.len_used, (Callin_char_t *) pmeth->args[0].svalue.buf_addr, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr, 1);
          }
          else if (optype == 1) { /* method from mclass */
-            rc = pcon->p_isc_so->p_CachePushMethod(pmeth->args[0].num.oref, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr, 1);
+            rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushMethodW(pmeth->args[0].num.oref, (int) pmeth->args[1].cvalue.len_used, (unsigned short *) pmeth->args[1].cvalue.buf16_addr, 1)
+                             : pcon->p_isc_so->p_CachePushMethod(pmeth->args[0].num.oref, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr, 1);
          }
          else if (optype == 2) { /* set from mclass */
-            rc = pcon->p_isc_so->p_CachePushProperty(pmeth->args[0].num.oref, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr);
+            rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushPropertyW(pmeth->args[0].num.oref, (int) pmeth->args[1].cvalue.len_used, (unsigned short *) pmeth->args[1].cvalue.buf16_addr)
+                             : pcon->p_isc_so->p_CachePushProperty(pmeth->args[0].num.oref, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr);
          }
          else if (optype == 3) { /* get from mclass */
-            rc = pcon->p_isc_so->p_CachePushProperty(pmeth->args[0].num.oref, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr);
+            rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushPropertyW(pmeth->args[0].num.oref, (int) pmeth->args[1].cvalue.len_used, (unsigned short *) pmeth->args[1].cvalue.buf16_addr)
+                             : pcon->p_isc_so->p_CachePushProperty(pmeth->args[0].num.oref, (int) pmeth->args[1].svalue.len_used, (Callin_char_t *) pmeth->args[1].svalue.buf_addr);
          }
       }
       else {
@@ -8450,6 +8994,7 @@ __try {
 
    rc = pcon->p_isc_so->p_CacheSetProperty();
 
+   pcon->utf16 = 0;
    if (rc == CACHE_SUCCESS) {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &rc, DBX_DTYPE_INT);
    }
@@ -8598,11 +9143,11 @@ __try {
       nx = 0;
       strcat(label, "^");
       strcat(label, routine);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, label, (int) strlen(label), 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) label, (int) strlen(label), 0, 0);
       sprintf(buffer, "%d", pmeth->psql->sql_no);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, buffer, (int) strlen(buffer), 0);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, pmeth->psql->sql_script, (int) strlen(pmeth->psql->sql_script), 0);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, params, (int) strlen(params), 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) buffer, (int) strlen(buffer), 0, 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pmeth->psql->sql_script, (int) strlen(pmeth->psql->sql_script), 0, 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) params, (int) strlen(params), 0, 0);
 
       dbx_log_transmission(pcon, pmeth, (char *) "mcursor::execute (SQL)");
       pmeth->ibuffer_used = 0;
@@ -8618,11 +9163,11 @@ __try {
       nx = 0;
       strcat(label, "^");
       strcat(label, routine);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, label, (int) strlen(label), 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) label, (int) strlen(label), 0, 0);
       sprintf(buffer, "%d", pmeth->psql->sql_no);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, buffer, (int) strlen(buffer), 0);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, pmeth->psql->sql_script, (int) strlen(pmeth->psql->sql_script), 0);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, params, (int) strlen(params), 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) buffer, (int) strlen(buffer), 0, 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pmeth->psql->sql_script, (int) strlen(pmeth->psql->sql_script), 0, 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) params, (int) strlen(params), 0, 0);
 
       rc = netx_tcp_command(pmeth, DBX_CMND_FUNCTION, 0);
    }
@@ -8799,12 +9344,12 @@ __try {
       nx = 0;
       strcat(label, "^");
       strcat(label, routine);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, label, (int) strlen(label), 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) label, (int) strlen(label), 0, 0);
       sprintf(buffer, "%d", pmeth->psql->sql_no);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, buffer, (int) strlen(buffer), 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) buffer, (int) strlen(buffer), 0, 0);
       sprintf(rowstr, "%d", rn);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, rowstr, (int) strlen(rowstr), 0);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, params, (int) strlen(params), 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) rowstr, (int) strlen(rowstr), 0, 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) params, (int) strlen(params), 0, 0);
 
       dbx_log_transmission(pcon, pmeth, (char *) "mcursor::next (SQL)");
       pmeth->ibuffer_used = 0;
@@ -8820,12 +9365,12 @@ __try {
       nx = 0;
       strcat(label, "^");
       strcat(label, routine);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, label, (int) strlen(label), 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) label, (int) strlen(label), 0, 0);
       sprintf(buffer, "%d", pmeth->psql->sql_no);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, buffer, (int) strlen(buffer), 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) buffer, (int) strlen(buffer), 0, 0);
       sprintf(rowstr, "%d", rn);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, rowstr, (int) strlen(rowstr), 0);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, params, (int) strlen(params), 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) rowstr, (int) strlen(rowstr), 0, 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) params, (int) strlen(params), 0, 0);
 
       rc = netx_tcp_command(pmeth, DBX_CMND_FUNCTION, 0);
    }
@@ -8982,10 +9527,10 @@ __try {
       nx = 0;
       strcat(label, "^");
       strcat(label, routine);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, label, (int) strlen(label), 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) label, (int) strlen(label), 0, 0);
       sprintf(buffer, "%d", pmeth->psql->sql_no);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, buffer, (int) strlen(buffer), 0);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, params, (int) strlen(params), 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) buffer, (int) strlen(buffer), 0, 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) params, (int) strlen(params), 0, 0);
 
       dbx_log_transmission(pcon, pmeth, (char *) "mcursor::cleanup (SQL)");
       pmeth->ibuffer_used = 0;
@@ -9002,10 +9547,10 @@ __try {
       nx = 0;
       strcat(label, "^");
       strcat(label, routine);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, label, (int) strlen(label), 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) label, (int) strlen(label), 0, 0);
       sprintf(buffer, "%d", pmeth->psql->sql_no);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, buffer, (int) strlen(buffer), 0);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, params, (int) strlen(params), 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) buffer, (int) strlen(buffer), 0, 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) params, (int) strlen(params), 0, 0);
 
       rc = netx_tcp_command(pmeth, DBX_CMND_FUNCTION, 0);
    }
@@ -9096,6 +9641,8 @@ int dbx_global_directory(DBXMETH *pmeth, DBXQR *pqr_prev, short dir, int *counte
    int rc, eod, len, tmpglolen;
    char *p;
    char buffer[256], tmpglo[32];
+   unsigned short *p16;
+   unsigned short buffer16[256];
    DBXCON *pcon = pmeth->pcon;
 
 #ifdef _WIN32
@@ -9108,7 +9655,7 @@ __try {
 
       pmeth->ibuffer_used = 0;
       nx = 0;
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, pqr_prev->global_name.buf_addr, pqr_prev->global_name.len_used, 0);
+      pcon->utf16 ? dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_prev->global_name16.cvalue.buf16_addr, pqr_prev->global_name16.cvalue.len_used, 1, 0) : dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_prev->global_name.buf_addr, pqr_prev->global_name.len_used, 0, 0);
       dbx_log_transmission(pcon, pmeth, (char *) (dir == 1 ? "mcursor::next (global directory)" : "mcursor::previous (global directory)"));
       pmeth->ibuffer_used = 0;
    }
@@ -9125,6 +9672,20 @@ __try {
       else {
          strcpy(pqr_prev->global_name.buf_addr, "^");
          pqr_prev->global_name.len_used = 1;
+      }
+   }
+   if (pcon->utf16) {
+      if (pqr_prev->global_name16.cvalue.buf16_addr[0] != 94) {
+         buffer16[0] = 94;
+         if (pqr_prev->global_name16.cvalue.len_used > 0) {
+            T_MEMCPY((void *) (buffer16 + 1), (void *) pqr_prev->global_name16.cvalue.buf16_addr, pqr_prev->global_name16.cvalue.len_used * sizeof(short));
+            pqr_prev->global_name16.cvalue.len_used ++;
+            T_MEMCPY((void *) pqr_prev->global_name16.cvalue.buf16_addr, (void *) buffer16, pqr_prev->global_name16.cvalue.len_used * sizeof(short));
+         }
+         else {
+            pqr_prev->global_name16.cvalue.buf16_addr[0] = 94;
+            pqr_prev->global_name16.cvalue.len_used = 1;
+         }
       }
    }
 
@@ -9148,7 +9709,7 @@ __try {
 
       pmeth->ibuffer_used = 0;
       nx = 0;
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, pqr_prev->global_name.buf_addr, pqr_prev->global_name.len_used, 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_prev->global_name.buf_addr, pqr_prev->global_name.len_used, 0, 0);
       if (dir == 1) {
          rc = netx_tcp_command(pmeth, DBX_CMND_GNAMENEXT, 0);
       }
@@ -9241,7 +9802,7 @@ __try {
          return eod;
       }
 
-      rc = pcon->p_isc_so->p_CachePushStr((int) pqr_prev->global_name.len_used, (Callin_char_t *) pqr_prev->global_name.buf_addr);
+      rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushStrW((int) pqr_prev->global_name16.cvalue.len_used, (unsigned short *) pqr_prev->global_name16.cvalue.buf16_addr) : pcon->p_isc_so->p_CachePushStr((int) pqr_prev->global_name.len_used, (Callin_char_t *) pqr_prev->global_name.buf_addr);
       if (rc != CACHE_SUCCESS) {
          eod = 1;
          return eod;
@@ -9251,15 +9812,29 @@ __try {
 
       if (rc == CACHE_SUCCESS) {
          len = 0;
-         rc = pcon->p_isc_so->p_CachePopStr(&len, (Callin_char_t **) &p);
-         if (rc == CACHE_SUCCESS && len) {
-            strncpy(pqr_prev->global_name.buf_addr, p, len);
-            pqr_prev->global_name.buf_addr[len] = '\0';
-            pqr_prev->global_name.len_used = len;
-            (*counter) ++;
+         if (pcon->utf16) {
+            rc = pcon->p_isc_so->p_CachePopStrW(&len, (unsigned short **) &p16);
+            if (rc == CACHE_SUCCESS && len) {
+               T_MEMCPY((void *) pqr_prev->global_name16.cvalue.buf16_addr, (void *) p16, len * sizeof(short));
+               pqr_prev->global_name16.cvalue.buf16_addr[len] = 0;
+               pqr_prev->global_name16.cvalue.len_used = len;
+               (*counter) ++;
+            }
+            else {
+               eod = 1;
+            }
          }
          else {
-            eod = 1;
+            rc = pcon->p_isc_so->p_CachePopStr(&len, (Callin_char_t **) &p);
+            if (rc == CACHE_SUCCESS && len) {
+               strncpy(pqr_prev->global_name.buf_addr, p, len);
+               pqr_prev->global_name.buf_addr[len] = '\0';
+               pqr_prev->global_name.len_used = len;
+               (*counter) ++;
+            }
+            else {
+               eod = 1;
+            }
          }
       }
       else {
@@ -9313,9 +9888,9 @@ __try {
 
       pmeth->ibuffer_used = 0;
       nx = 0;
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, pqr_prev->global_name.buf_addr, pqr_prev->global_name.len_used, 0);
+      pcon->utf16 ? dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_prev->global_name16.cvalue.buf16_addr, pqr_prev->global_name16.cvalue.len_used, 1, 0) : dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_prev->global_name.buf_addr, pqr_prev->global_name.len_used, 0, 0);
       for (n = 0; n < pqr_prev->keyn; n ++) {
-         dbx_ibuffer_add(pmeth, NULL, nx ++, str, pqr_prev->key[n].buf_addr, pqr_prev->key[n].len_used, 0);
+         pcon->utf16 ? dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_prev->keys[n].cvalue.buf16_addr, pqr_prev->keys[n].cvalue.len_used, 1, 0) : dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_prev->ykeys[n].buf_addr, pqr_prev->ykeys[n].len_used, 0, 0);
       }
       dbx_log_transmission(pcon, pmeth, (char *) (dir == 1 ? "mcursor::next (order)" : "mcursor::previous (order)"));
       pmeth->ibuffer_used = 0;
@@ -9327,9 +9902,9 @@ __try {
 
       pmeth->ibuffer_used = 0;
       nx = 0;
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, pqr_prev->global_name.buf_addr, pqr_prev->global_name.len_used, 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_prev->global_name.buf_addr, pqr_prev->global_name.len_used, 0, 0);
       for (n = 0; n < pqr_prev->keyn; n ++) {
-         dbx_ibuffer_add(pmeth, NULL, nx ++, str, pqr_prev->key[n].buf_addr, pqr_prev->key[n].len_used, 0);
+         dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_prev->ykeys[n].buf_addr, pqr_prev->ykeys[n].len_used, 0, 0);
       }
       if (dir == 1) {
          rc = netx_tcp_command(pmeth, getdata ? DBX_CMND_GNEXTDATA : DBX_CMND_GNEXT, 0);
@@ -9340,8 +9915,8 @@ __try {
       if (getdata && pmeth->output_val.svalue.len_used > 0) {
          len = dbx_get_block_size((unsigned char *) pmeth->output_val.svalue.buf_addr, 0, &(pmeth->output_val.sort), &(pmeth->output_val.type));
          nx = 5;
-         strncpy(pqr_prev->key[pqr_prev->keyn - 1].buf_addr, pmeth->output_val.svalue.buf_addr + nx, len);
-         pqr_prev->key[pqr_prev->keyn - 1].len_used = len;
+         strncpy(pqr_prev->ykeys[pqr_prev->keyn - 1].buf_addr, pmeth->output_val.svalue.buf_addr + nx, len);
+         pqr_prev->ykeys[pqr_prev->keyn - 1].len_used = len;
          nx += len;
          len = dbx_get_block_size((unsigned char *) pmeth->output_val.svalue.buf_addr + nx, 0, &(pmeth->output_val.sort), &(pmeth->output_val.type));
          nx += 5;
@@ -9358,7 +9933,7 @@ __try {
          pmeth->pfun = &fun;
          fun.global = &(pqr_prev->global_name);
          fun.in_nkeys = pqr_prev->keyn;
-         fun.in_keys = &pqr_prev->key[0];
+         fun.in_keys = &pqr_prev->ykeys[0];
          fun.out_keys = &(pmeth->output_val.svalue);
          fun.getdata = getdata;
          fun.data = &(pqr_prev->data.svalue);
@@ -9368,33 +9943,38 @@ __try {
       }
       else {
          if (dir == 1) {
-            rc = pcon->p_ydb_so->p_ydb_subscript_next_s(&(pqr_prev->global_name), pqr_prev->keyn, &pqr_prev->key[0], &(pmeth->output_val.svalue));
+            rc = pcon->p_ydb_so->p_ydb_subscript_next_s(&(pqr_prev->global_name), pqr_prev->keyn, &pqr_prev->ykeys[0], &(pmeth->output_val.svalue));
          }
          else {
-            rc = pcon->p_ydb_so->p_ydb_subscript_previous_s(&(pqr_prev->global_name), pqr_prev->keyn, &pqr_prev->key[0], &(pmeth->output_val.svalue));
+            rc = pcon->p_ydb_so->p_ydb_subscript_previous_s(&(pqr_prev->global_name), pqr_prev->keyn, &pqr_prev->ykeys[0], &(pmeth->output_val.svalue));
          }
          if (rc == CACHE_SUCCESS && pmeth->output_val.svalue.len_used > 0) {
-            strcpy(pqr_prev->key[pqr_prev->keyn - 1].buf_addr, pmeth->output_val.svalue.buf_addr);
-            pqr_prev->key[pqr_prev->keyn - 1].len_used =  pmeth->output_val.svalue.len_used;
+            strcpy(pqr_prev->ykeys[pqr_prev->keyn - 1].buf_addr, pmeth->output_val.svalue.buf_addr);
+            pqr_prev->ykeys[pqr_prev->keyn - 1].len_used =  pmeth->output_val.svalue.len_used;
             if (getdata) {
-               rc = pcon->p_ydb_so->p_ydb_get_s(&(pqr_prev->global_name), pqr_prev->keyn, &pqr_prev->key[0], &(pqr_prev->data.svalue));
+               rc = pcon->p_ydb_so->p_ydb_get_s(&(pqr_prev->global_name), pqr_prev->keyn, &pqr_prev->ykeys[0], &(pqr_prev->data.svalue));
             }
          }
          else {
-            pqr_prev->key[pqr_prev->keyn - 1].len_used = 0;
+            pqr_prev->ykeys[pqr_prev->keyn - 1].len_used = 0;
          }
       }
    }
    else {
-      rc = pcon->p_isc_so->p_CachePushGlobal((int) pqr_prev->global_name.len_used, (Callin_char_t *) pqr_prev->global_name.buf_addr);
+      rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushGlobalW((int) pqr_prev->global_name16.cvalue.len_used, (unsigned short *) pqr_prev->global_name16.cvalue.buf16_addr) : pcon->p_isc_so->p_CachePushGlobal((int) pqr_prev->global_name.len_used, (Callin_char_t *) pqr_prev->global_name.buf_addr);
       for (n = 0; n < pqr_prev->keyn; n ++) {
-         rc = pcon->p_isc_so->p_CachePushStr(pqr_prev->key[n].len_used, (Callin_char_t *) pqr_prev->key[n].buf_addr);
+         rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushStrW(pqr_prev->keys[n].cvalue.len_used, (unsigned short *) pqr_prev->keys[n].cvalue.buf16_addr) : pcon->p_isc_so->p_CachePushStr(pqr_prev->ykeys[n].len_used, (Callin_char_t *) pqr_prev->ykeys[n].buf_addr);
       }
       rc = pcon->p_isc_so->p_CacheGlobalOrder(pqr_prev->keyn, dir, getdata);
       if (rc == CACHE_SUCCESS) {
         if (getdata) {
             rc = isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
-            if (pmeth->output_val.svalue.len_used == 1 && pmeth->output_val.svalue.buf_addr[0] == '0') {
+            if (pcon->utf16 && pmeth->output_val.cvalue.len_used == 1 && pmeth->output_val.cvalue.buf16_addr[0] == 48) {
+               pqr_prev->data.cvalue.buf16_addr[0] = 0;
+               pqr_prev->data.cvalue.len_used = 0;
+               rc = isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
+            }
+            else if (!pcon->utf16 && pmeth->output_val.svalue.len_used == 1 && pmeth->output_val.svalue.buf_addr[0] == '0') {
                pqr_prev->data.svalue.buf_addr[0] = '\0';
                pqr_prev->data.svalue.len_used = 0;
                rc = isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
@@ -9409,8 +9989,15 @@ __try {
          }
       }
       if (rc == CACHE_SUCCESS) {
-         strcpy(pqr_prev->key[pqr_prev->keyn - 1].buf_addr, pmeth->output_val.svalue.buf_addr);
-         pqr_prev->key[pqr_prev->keyn - 1].len_used =  pmeth->output_val.svalue.len_used;
+         if (pcon->utf16) {
+            T_MEMCPY((void *) pqr_prev->keys[pqr_prev->keyn - 1].cvalue.buf16_addr, (void *) pmeth->output_val.cvalue.buf16_addr, (size_t) pmeth->output_val.cvalue.len_used * sizeof(short));
+            pqr_prev->keys[pqr_prev->keyn - 1].cvalue.len_used = pmeth->output_val.cvalue.len_used;
+         }
+         else {
+            T_MEMCPY((void *) pqr_prev->ykeys[pqr_prev->keyn - 1].buf_addr, (void *) pmeth->output_val.svalue.buf_addr, (size_t) pmeth->output_val.svalue.len_used);
+            pqr_prev->ykeys[pqr_prev->keyn - 1].len_used = pmeth->output_val.svalue.len_used;
+            pqr_prev->keys[pqr_prev->keyn - 1].svalue.len_used =  pmeth->output_val.svalue.len_used;
+         }
       }
    }
 
@@ -9466,9 +10053,9 @@ __try {
 
       pmeth->ibuffer_used = 0;
       nx = 0;
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, pqr_prev->global_name.buf_addr, pqr_prev->global_name.len_used, 0);
+      pcon->utf16 ? dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_prev->global_name16.cvalue.buf16_addr, pqr_prev->global_name16.cvalue.len_used, 1, 0) : dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_prev->global_name.buf_addr, pqr_prev->global_name.len_used, 0, 0);
       for (n = 0; n < pqr_prev->keyn; n ++) {
-         dbx_ibuffer_add(pmeth, NULL, nx ++, str, pqr_prev->key[n].buf_addr, pqr_prev->key[n].len_used, 0);
+         pcon->utf16 ? dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_prev->keys[n].cvalue.buf16_addr, pqr_prev->keys[n].cvalue.len_used, 1, 0) : dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_prev->ykeys[n].buf_addr, pqr_prev->ykeys[n].len_used, 0, 0);
       }
       dbx_log_transmission(pcon, pmeth, (char *) (dir == 1 ? "mcursor::next (query)" : "mcursor::previous (query)"));
       pmeth->ibuffer_used = 0;
@@ -9480,9 +10067,9 @@ __try {
 
       pmeth->ibuffer_used = 0;
       nx = 0;
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, pqr_prev->global_name.buf_addr, pqr_prev->global_name.len_used, 0);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_prev->global_name.buf_addr, pqr_prev->global_name.len_used, 0, 0);
       for (n = 0; n < pqr_prev->keyn; n ++) {
-         dbx_ibuffer_add(pmeth, NULL, nx ++, str, pqr_prev->key[n].buf_addr, pqr_prev->key[n].len_used, 0);
+         dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_prev->ykeys[n].buf_addr, pqr_prev->ykeys[n].len_used, 0, 0);
       }
       if (dir == 1) {
          rc = netx_tcp_command(pmeth, getdata ? DBX_CMND_GNNODEDATA : DBX_CMND_GNNODE, 0);
@@ -9526,9 +10113,9 @@ __try {
          pmeth->pfun = &fun;
          fun.global = &(pqr_prev->global_name);
          fun.in_nkeys = pqr_prev->keyn;
-         fun.in_keys = &pqr_prev->key[0];
+         fun.in_keys = &pqr_prev->ykeys[0];
          fun.out_nkeys = &(pqr_next->keyn);
-         fun.out_keys = &pqr_next->key[0];
+         fun.out_keys = &pqr_next->ykeys[0];
          fun.getdata = getdata;
          fun.data = &(pqr_next->data.svalue);
          fun.dir = dir;
@@ -9537,13 +10124,13 @@ __try {
       }
       else {
          if (dir == 1) {
-            rc = pcon->p_ydb_so->p_ydb_node_next_s(&(pqr_prev->global_name), pqr_prev->keyn, &pqr_prev->key[0], &(pqr_next->keyn), &pqr_next->key[0]);
+            rc = pcon->p_ydb_so->p_ydb_node_next_s(&(pqr_prev->global_name), pqr_prev->keyn, &pqr_prev->ykeys[0], &(pqr_next->keyn), &pqr_next->ykeys[0]);
          }
          else {
-            rc = pcon->p_ydb_so->p_ydb_node_previous_s(&(pqr_prev->global_name), pqr_prev->keyn, &pqr_prev->key[0], &(pqr_next->keyn), &pqr_next->key[0]);
+            rc = pcon->p_ydb_so->p_ydb_node_previous_s(&(pqr_prev->global_name), pqr_prev->keyn, &pqr_prev->ykeys[0], &(pqr_next->keyn), &pqr_next->ykeys[0]);
          }
          if (getdata && rc == YDB_OK && pqr_next->keyn != YDB_NODE_END) {
-            rc = pcon->p_ydb_so->p_ydb_get_s(&(pqr_next->global_name), pqr_next->keyn, &pqr_next->key[0], &(pqr_next->data.svalue));
+            rc = pcon->p_ydb_so->p_ydb_get_s(&(pqr_next->global_name), pqr_next->keyn, &pqr_next->ykeys[0], &(pqr_next->data.svalue));
          }
       }
 
@@ -9556,21 +10143,26 @@ __try {
       }
 /*
       if (getdata && !eod) {
-         rc = pcon->p_ydb_so->p_ydb_get_s(&(pqr_next->global_name), pqr_next->keyn, &pqr_next->key[0], &(pqr_next->data.svalue));
+         rc = pcon->p_ydb_so->p_ydb_get_s(&(pqr_next->global_name), pqr_next->keyn, &pqr_next->ykeys[0], &(pqr_next->data.svalue));
       }
 */
    }
    else {
-      rc = pcon->p_isc_so->p_CachePushGlobal((int) pqr_prev->global_name.len_used, (Callin_char_t *) pqr_prev->global_name.buf_addr);
+      rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushGlobalW((int) pqr_prev->global_name16.cvalue.len_used, (unsigned short *) pqr_prev->global_name16.cvalue.buf16_addr) : pcon->p_isc_so->p_CachePushGlobal((int) pqr_prev->global_name.len_used, (Callin_char_t *) pqr_prev->global_name.buf_addr);
       for (n = 0; n < pqr_prev->keyn; n ++) {
-         rc = pcon->p_isc_so->p_CachePushStr(pqr_prev->key[n].len_used, (Callin_char_t *) pqr_prev->key[n].buf_addr);
+         rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushStrW(pqr_prev->keys[n].cvalue.len_used, (unsigned short *) pqr_prev->keys[n].cvalue.buf16_addr) : pcon->p_isc_so->p_CachePushStr(pqr_prev->ykeys[n].len_used, (Callin_char_t *) pqr_prev->ykeys[n].buf_addr);
       }
       rc = pcon->p_isc_so->p_CacheGlobalQuery(pqr_prev->keyn, dir, getdata);
       if (rc == CACHE_SUCCESS) {
         pqr_next->keyn = 0;
          if (getdata) {
             rc = isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
-            if (pmeth->output_val.svalue.len_used == 1 && pmeth->output_val.svalue.buf_addr[0] == '0') {
+            if (pcon->utf16 && pmeth->output_val.cvalue.len_used == 1 && pmeth->output_val.cvalue.buf16_addr[0] == 48) {
+               rc = isc_pop_value(pmeth, &(pqr_next->data), DBX_DTYPE_STR);
+               rc = isc_pop_value(pmeth, &(pqr_next->data), DBX_DTYPE_STR);
+               eod = 1;
+            }
+            else if (!pcon->utf16 && pmeth->output_val.svalue.len_used == 1 && pmeth->output_val.svalue.buf_addr[0] == '0') {
                rc = isc_pop_value(pmeth, &(pqr_next->data), DBX_DTYPE_STR);
                rc = isc_pop_value(pmeth, &(pqr_next->data), DBX_DTYPE_STR);
                eod = 1;
@@ -9578,15 +10170,23 @@ __try {
             else {
                rc = isc_pop_value(pmeth, &(pqr_next->data), DBX_DTYPE_STR);
                rc = isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
-               dbx_parse_global_reference(pmeth, pqr_next, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used);
+               pcon->utf16 ? dbx_parse_global_reference16(pmeth, pqr_next, (unsigned short *) pmeth->output_val.cvalue.buf16_addr, (int) pmeth->output_val.cvalue.len_used) : dbx_parse_global_reference(pmeth, pqr_next, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used);
                rc = isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
             }
          }
          else {
             rc = isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
-            dbx_parse_global_reference(pmeth, pqr_next, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used);
-            if (pmeth->output_val.svalue.len_used == 0) {
-               eod = 1;
+            if (pcon->utf16) {
+               dbx_parse_global_reference16(pmeth, pqr_next, (unsigned short *) pmeth->output_val.cvalue.buf16_addr, (int) pmeth->output_val.cvalue.len_used);
+               if (pmeth->output_val.cvalue.len_used == 0) {
+                  eod = 1;
+               }
+            }
+            else {
+               dbx_parse_global_reference(pmeth, pqr_next, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used);
+               if (pmeth->output_val.svalue.len_used == 0) {
+                  eod = 1;
+               }
             }
             rc = isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
          }
@@ -9606,9 +10206,9 @@ __try {
 
          pmeth->ibuffer_used = 0;
          nx = 0;
-         dbx_ibuffer_add(pmeth, NULL, nx ++, str, pqr_next->global_name.buf_addr, pqr_next->global_name.len_used, 0);
+         dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_next->global_name.buf_addr, pqr_next->global_name.len_used, 0, 0);
          for (n = 0; n < pqr_next->keyn; n ++) {
-            dbx_ibuffer_add(pmeth, NULL, nx ++, str, pqr_next->key[n].buf_addr, pqr_next->key[n].len_used, 0);
+            dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pqr_next->ykeys[n].buf_addr, pqr_next->ykeys[n].len_used, 0, 0);
          }
          dbx_log_response(pcon, (char *) pmeth->ibuffer, (int) pmeth->ibuffer_used, (char *) (dir == 1 ? "mcursor::next (query)" : "mcursor::previous (query)"));
          pmeth->ibuffer_used = 0;
@@ -9726,8 +10326,8 @@ __try {
       }
 
       len = (unsigned int) strlen(p);
-      strcpy((char *) pqr->key[pqr->keyn].buf_addr, (char *) p);
-      pqr->key[pqr->keyn].len_used = len;
+      strcpy((char *) pqr->ykeys[pqr->keyn].buf_addr, (char *) p);
+      pqr->ykeys[pqr->keyn].len_used = len;
       pqr->keyn ++;
 
       if (pc)
@@ -9758,6 +10358,162 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
 }
 #endif
 }
+
+
+int dbx_parse_global_reference16(DBXMETH *pmeth, DBXQR *pqr, unsigned short *global_ref, int global_ref_len)
+{
+   int n, nq;
+   unsigned int len;
+   unsigned short *pf, *p, *p1, *pc, *pc0;
+
+#ifdef _WIN32
+__try {
+#endif
+/*
+   for (n = 0; n < global_ref_len; n ++) {
+      printf("\r\n n=%d; c=%c %d;", n, (char) global_ref[n], global_ref[n]);
+   }
+*/
+   if (global_ref_len == 0) {
+      pqr->keyn = 0;
+      return 0;
+   }
+   /* (==40 )==41 ,==44 "==34 */
+   if (global_ref[global_ref_len - 1] == 41) {
+      global_ref_len --;
+      global_ref[global_ref_len] = 0;
+   }
+
+   p = NULL;
+   pf = global_ref;
+   while (*pf != 0) {
+      if (*pf == 40) { /* ( */
+         p = pf;
+         break;
+      }
+      pf ++;
+   }
+   /* p = (char *) strstr((char *) global_ref, "("); */
+   if (!p) { /* root node; no keys */
+      pqr->keyn = 0;
+      return 0;
+   }
+
+   p ++;
+
+   pc = NULL;
+   pqr->keyn = 0;
+   for (;;) {
+
+      pc0 = p;
+      while (pc0) {
+
+         pc = NULL;
+         pf = pc0;
+         while (*pf != 0) {
+            if (*pf == 44) { /* , */
+               pc = pf;
+               break;
+            }
+            pf ++;
+         }
+         /* pc = strstr(pc0, ","); */
+
+         if (pc) {
+            *pc = 0;
+            nq = 0;
+            p1 = p;
+            while (*p1) {
+               if (*p1 == 34) /* " */
+                  nq ++;
+               p1 ++;
+            }
+            *pc = 34; /* " */
+            if ((nq % 2) == 0) {
+               break;
+            }
+            else {
+               pc0 = (pc + 1);
+            }
+         }
+         else {
+            break;
+         }
+      }
+      if (pc) {
+         *pc = 0;
+      }
+
+      if (*p == 34) { /* " */
+         unsigned short *p1, *p2;
+         p ++;
+         p1 = p;
+         p2 = p;
+         while (*p1) {
+            if (*p1 == 34) { /* " */
+               len = 0;
+               while (*p1 == 34) { /* " */
+                  len ++;
+                  p1 ++;
+               }
+               len = len / 2;
+               for (n = 0; n < (int) len; n ++) {
+                  *(p2 ++) = 34; /* " */
+               }
+            }
+            else
+               *(p2 ++) = *(p1 ++);
+
+         }
+         *(p2++) = 0;
+      }
+
+      pf = p;
+      len = 0;
+      while (*pf) {
+         len ++;
+         pf ++;
+      }
+/*
+      for (n = 0; n < 5; n ++) {
+         printf("\r\n pqr->keyn=%d; len=%d; n=%d; c=%c %d;", pqr->keyn, len, n, (char) p[n], p[n]);
+      }
+*/
+      /* len = (unsigned int) strlen(p); */
+      T_MEMCPY((void *) pqr->keys[pqr->keyn].cvalue.buf16_addr, (void *) p, (size_t) len * sizeof(short));
+      pqr->keys[pqr->keyn].cvalue.buf16_addr[len] = 0;
+      pqr->keys[pqr->keyn].cvalue.len_used = len;
+      pqr->keyn ++;
+
+      if (pc)
+         p = (pc + 1);
+      else
+         break;
+   }
+
+   return 0;
+
+#ifdef _WIN32
+}
+__except (EXCEPTION_EXECUTE_HANDLER) {
+
+   DWORD code;
+   char bufferx[256];
+
+   __try {
+      code = GetExceptionCode();
+      sprintf_s(bufferx, 255, "Exception caught in f:dbx_parse_global_reference16: %x", code);
+      dbx_log_event(pmeth->pcon, bufferx, "Error Condition", 0);
+   }
+   __except (EXCEPTION_EXECUTE_HANDLER) {
+      ;
+   }
+
+   return 0;
+}
+#endif
+}
+
 
 
 int cache_report_failure(DBXCON *pcon)
@@ -10146,16 +10902,24 @@ int dbx_free(void *p, short id)
    return 0;
 }
 
-DBXQR * dbx_alloc_dbxqr(DBXQR *pqr, int dsize, short context)
+
+DBXQR * dbx_alloc_dbxqr(DBXQR *pqr, int dsize, short alloc_char16, short context)
 {
    int n;
+   unsigned short *p16;
    char *p;
 
    pqr = (DBXQR *) dbx_malloc(sizeof(DBXQR) + CACHE_MAXSTRLEN, 0);
    if (!pqr) {
       return pqr;
    }
+
+   pqr->kbuffer16 = NULL;
+   pqr->kbuffer16_size = 0;
+   pqr->kbuffer16_used = 0;
+
    pqr->kbuffer_size = CACHE_MAXSTRLEN;
+   pqr->kbuffer_used = 0;
    p = (char *) ((char *) pqr) + sizeof(DBXQR);
    pqr->global_name.buf_addr = p;
    pqr->global_name.len_alloc = 128;
@@ -10163,26 +10927,66 @@ DBXQR * dbx_alloc_dbxqr(DBXQR *pqr, int dsize, short context)
    p += 128;
    pqr->kbuffer = (unsigned char *) p;
    for (n = 0; n < DBX_MAXARGS; n ++) {
-      pqr->key[n].buf_addr = (p + 5);
-      pqr->key[n].len_alloc = 256;
-      pqr->key[n].len_used = 0;
+      pqr->ykeys[n].buf_addr = (p + 5);
+      pqr->ykeys[n].len_alloc = 256;
+      pqr->ykeys[n].len_used = 0;
+      pqr->keys->svalue.buf_addr = pqr->ykeys[n].buf_addr;
+      pqr->keys->svalue.len_alloc = pqr->ykeys[n].len_alloc;
+      pqr->keys->svalue.len_used = pqr->ykeys[n].len_used;
+      pqr->keys->cvalue.buf16_addr = NULL;
+      pqr->keys->cvalue.len_alloc = 0;
+      pqr->keys->cvalue.len_used = 0;
       p += (5 + 256);
    }
-
-   pqr->data.svalue.len_alloc = CACHE_MAXSTRLEN;
-   pqr->data.svalue.len_used = 0;
 
    pqr->data.svalue.buf_addr = (char *) dbx_malloc(CACHE_MAXSTRLEN, 0);
    if (pqr->data.svalue.buf_addr) {
       pqr->data.svalue.len_alloc = CACHE_MAXSTRLEN;
       pqr->data.svalue.len_used = 0;
    }
+   pqr->data.cvalue.buf16_addr = NULL;
+   pqr->data.cvalue.len_alloc = 0;
+   pqr->data.cvalue.len_used = 0;
+
+   if (alloc_char16) {
+      pqr->global_name16.cvalue.buf16_addr = (unsigned short *) dbx_malloc(sizeof(short) * 128, 0);;
+      pqr->global_name16.cvalue.len_alloc = 128;
+      pqr->global_name16.cvalue.len_used = 0;
+
+      pqr->kbuffer16 = (unsigned short *) dbx_malloc(sizeof(short) * CACHE_MAXSTRLEN, 0);
+      pqr->kbuffer16_size = CACHE_MAXSTRLEN;
+      pqr->kbuffer16_used = 0;
+      p16 = (unsigned short *) pqr->kbuffer16;
+      pqr->global_name16.cvalue.buf16_addr = p16;
+      pqr->global_name16.cvalue.len_alloc = 128;
+      pqr->global_name16.cvalue.len_used = 0;
+      p16 += 128;
+      for (n = 0; n < DBX_MAXARGS; n ++) {
+         pqr->keys[n].cvalue.buf16_addr = (p16 + 5);
+         pqr->keys[n].cvalue.len_alloc = 256;
+         pqr->keys[n].cvalue.len_used = 0;
+         p16 += (5 + 256);
+      }
+
+      pqr->data.cvalue.buf16_addr = (unsigned short *) dbx_malloc(sizeof(short) * CACHE_MAXSTRLEN, 0);
+      if (pqr->data.cvalue.buf16_addr) {
+         pqr->data.cvalue.len_alloc = CACHE_MAXSTRLEN;
+         pqr->data.cvalue.len_used = 0;
+      }
+   }
+
    return pqr;
 }
 
 
 int dbx_free_dbxqr(DBXQR *pqr)
 {
+   if (pqr->kbuffer16) {
+      dbx_free((void *) pqr->kbuffer16, 0); 
+   }
+   if (pqr->data.cvalue.buf16_addr) {
+      dbx_free((void *) pqr->data.cvalue.buf16_addr, 0); 
+   }
    if (pqr->data.svalue.buf_addr) {
       dbx_free((void *) pqr->data.svalue.buf_addr, 0); 
    }
@@ -10274,6 +11078,8 @@ int dbx_create_string(DBXSTR *pstr, void *data, short type)
 
 int dbx_log_transmission(DBXCON *pcon, DBXMETH *pmeth, char *name)
 {
+   unsigned int n;
+   char *buffer8;
    char namex[64];
    char buffer[256];
 
@@ -10287,7 +11093,19 @@ int dbx_log_transmission(DBXCON *pcon, DBXMETH *pmeth, char *name)
    }
    sprintf(buffer, (char *) "mg-dbx: transmission: %s", name);
 
-   dbx_log_buffer(pcon, (char *) pmeth->ibuffer, pmeth->ibuffer_used, buffer, 0);
+   if (pcon->utf16) {
+      buffer8 = (char *) dbx_malloc(pmeth->ibuffer16_used + 4, 0);
+      if (!buffer8)
+         return 0;
+      for (n = 0; n < pmeth->ibuffer16_used; n ++) {
+         buffer8[n] = (char) pmeth->ibuffer16[n];
+      }
+      buffer[n] = '\0';
+      dbx_log_buffer(pcon, (char *) buffer8, pmeth->ibuffer_used, buffer, 0);
+   }
+   else {
+      dbx_log_buffer(pcon, (char *) pmeth->ibuffer, pmeth->ibuffer_used, buffer, 0);
+   }
 
    return 0;
 }

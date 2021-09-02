@@ -99,6 +99,7 @@ void mclass::New(const FunctionCallbackInfo<Value>& args)
    DBXCON *pcon = NULL;
    DBXMETH *pmeth = NULL;
    Local<Object> obj;
+   Local<String> cname;
 
    /* 1.4.10 */
    argc = args.Length();
@@ -128,10 +129,20 @@ void mclass::New(const FunctionCallbackInfo<Value>& args)
          }
          obj->c = c;
          pcon = c->pcon;
-         pmeth = dbx_request_memory(pcon, 1);
+         pmeth = dbx_request_memory(pcon, 1, 1);
          pmeth->argc = argc;
          if (argc > 1) {
-            dbx_write_char8(isolate, DBX_TO_STRING(args[1]), obj->class_name, obj->c->pcon->utf8);
+            cname = DBX_TO_STRING(args[1]);
+            dbx_write_char8(isolate, cname, obj->class_name, obj->c->pcon->utf8);
+            obj->class_name_len = (int) strlen(obj->class_name);
+            if (pcon->utf16) {
+               dbx_write_char16(isolate, cname, obj->class_name16);
+               obj->class_name16_len = (int) dbx_string16_length(isolate, cname);
+            }
+            else {
+               obj->class_name16[0] = 0;
+               obj->class_name16_len = 0;
+            }
             if (argc > 2) {
                DBX_DBFUN_START(c, c->pcon, pmeth);
                pmeth->ibuffer_used = 0;
@@ -244,10 +255,13 @@ void mclass::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int binary)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) clx, (char *) "mclass::classmethod");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    pmeth->binary = binary;
    cref.class_name = clx->class_name;
+   cref.class_name_len = clx->class_name_len;
+   cref.class_name16 = clx->class_name16;
+   cref.class_name16_len = clx->class_name16_len;
    cref.oref = clx->oref;
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
@@ -316,7 +330,7 @@ void mclass::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int binary)
          args.GetReturnValue().Set(bx);
       }
       else {
-         str = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
+         str = pcon->utf16 ? dbx_new_string16n(isolate, pmeth->output_val.cvalue.buf16_addr, pmeth->output_val.cvalue.len_used) : dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
          args.GetReturnValue().Set(str);
       }
       dbx_request_memory_free(pcon, pmeth, 0);
@@ -329,7 +343,11 @@ void mclass::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int binary)
 
    clx1->c = c;
    clx1->oref =  pmeth->output_val.num.oref;
-   strcpy(clx1->class_name, "");
+   clx1->class_name[0] = '\0';
+   clx1->class_name_len = 0;
+   clx1->class_name16[0] = 0;
+   clx1->class_name16_len = 0;
+
    dbx_request_memory_free(pcon, pmeth, 0);
    return;
 }
@@ -365,10 +383,13 @@ void mclass::MethodEx(const FunctionCallbackInfo<Value>& args, int binary)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) clx, (char *) "mclass::method");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    pmeth->binary = binary;
    cref.class_name = clx->class_name;
+   cref.class_name_len = clx->class_name_len;
+   cref.class_name16 = clx->class_name16;
+   cref.class_name16_len = clx->class_name16_len;
    cref.oref = clx->oref;
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
@@ -437,7 +458,7 @@ void mclass::MethodEx(const FunctionCallbackInfo<Value>& args, int binary)
          args.GetReturnValue().Set(bx);
       }
       else {
-         str = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
+         str = pcon->utf16 ? dbx_new_string16n(isolate, pmeth->output_val.cvalue.buf16_addr, pmeth->output_val.cvalue.len_used) : dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
          args.GetReturnValue().Set(str);
       }
       dbx_request_memory_free(pcon, pmeth, 0);
@@ -450,7 +471,11 @@ void mclass::MethodEx(const FunctionCallbackInfo<Value>& args, int binary)
 
    clx1->c = c;
    clx1->oref =  pmeth->output_val.num.oref;
-   strcpy(clx1->class_name, "");
+   clx1->class_name[0] = '\0';
+   clx1->class_name_len = 0;
+   clx1->class_name16[0] = 0;
+   clx1->class_name16_len = 0;
+
    dbx_request_memory_free(pcon, pmeth, 0);
    return;
 }
@@ -474,9 +499,12 @@ void mclass::SetProperty(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) clx, (char *) "mclass::setproperty");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    cref.class_name = clx->class_name;
+   cref.class_name_len = clx->class_name_len;
+   cref.class_name16 = clx->class_name16;
+   cref.class_name16_len = clx->class_name16_len;
    cref.oref = clx->oref;
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
@@ -576,10 +604,13 @@ void mclass::GetPropertyEx(const FunctionCallbackInfo<Value>& args, int binary)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) clx, (char *) "mclass::getproperty");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    pmeth->binary = binary;
    cref.class_name = clx->class_name;
+   cref.class_name_len = clx->class_name_len;
+   cref.class_name16 = clx->class_name16;
+   cref.class_name16_len = clx->class_name16_len;
    cref.oref = clx->oref;
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
@@ -648,7 +679,7 @@ void mclass::GetPropertyEx(const FunctionCallbackInfo<Value>& args, int binary)
          args.GetReturnValue().Set(bx);
       }
       else {
-         str = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
+         str = pcon->utf16 ? dbx_new_string16n(isolate, pmeth->output_val.cvalue.buf16_addr, pmeth->output_val.cvalue.len_used) : dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
          args.GetReturnValue().Set(str);
       }
       dbx_request_memory_free(pcon, pmeth, 0);
@@ -663,7 +694,11 @@ void mclass::GetPropertyEx(const FunctionCallbackInfo<Value>& args, int binary)
 
    clx1->c = c;
    clx1->oref =  pmeth->output_val.num.oref;
-   strcpy(clx1->class_name, "");
+   clx1->class_name[0] = '\0';
+   clx1->class_name_len = 0;
+   clx1->class_name16[0] = 0;
+   clx1->class_name16_len = 0;
+
    dbx_request_memory_free(pcon, pmeth, 0);
    return;
 }
@@ -678,6 +713,7 @@ void mclass::Reset(const FunctionCallbackInfo<Value>& args)
    DBXMETH *pmeth;
    Local<Object> obj;
    Local<String> str;
+   Local<String> cname;
    mclass *clx = ObjectWrap::Unwrap<mclass>(args.This());
    MG_CLASS_CHECK_CLASS(clx);
    DBX_DBNAME *c = clx->c;
@@ -688,7 +724,7 @@ void mclass::Reset(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) clx, (char *) "mclass::reset");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
 
@@ -700,7 +736,8 @@ void mclass::Reset(const FunctionCallbackInfo<Value>& args)
       return;
    }
 
-   dbx_write_char8(isolate, DBX_TO_STRING(args[0]), class_name, pcon->utf8);
+   cname = DBX_TO_STRING(args[0]);
+   dbx_write_char8(isolate, cname, class_name, pcon->utf8);
    if (class_name[0] == '\0') {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The class:reset method takes at least one argument (the class name)", 1)));
       dbx_request_memory_free(pcon, pmeth, 0);
@@ -740,6 +777,15 @@ void mclass::Reset(const FunctionCallbackInfo<Value>& args)
 
    clx->oref =  pmeth->output_val.num.oref;
    strcpy(clx->class_name, class_name);
+   clx->class_name_len = (int) strlen(clx->class_name);
+   if (pcon->utf16) {
+      dbx_write_char16(isolate, cname, clx->class_name16);
+      clx->class_name16_len = dbx_string16_length(isolate, cname);
+   }
+   else {
+      clx->class_name16[0] = 0;
+      clx->class_name16_len = 0;
+   }
 
    dbx_request_memory_free(pcon, pmeth, 0);
    return;

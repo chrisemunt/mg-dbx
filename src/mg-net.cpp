@@ -709,6 +709,13 @@ int netx_tcp_command(DBXMETH *pmeth, int command, int context)
    netbuf_used = (pmeth->ibuffer_used + DBX_IBUFFER_OFFSET);
    dbx_add_block_size(netbuf, 0, netbuf_used,  0, command);
 
+   /* v2.4.26 */
+   if (pcon->utf8 == 2)
+      netbuf[9] = 255;
+   else
+      netbuf[9] = 0;
+
+
 /*
    {
       char buffer[256];

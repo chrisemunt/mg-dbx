@@ -45,6 +45,9 @@ public:
    short          format;
    int            counter;
    char           global_name[256];
+   int            global_name_len;
+   unsigned short global_name16[256];
+   int            global_name16_len;
    DBXQR          *pqr_prev;
    DBXQR          *pqr_next;
    DBXSTR         data;
@@ -77,7 +80,8 @@ private:
    static v8::Persistent<v8::Function>       constructor;
 };
 
-int dbx_escape_output(DBXSTR *pdata, char *item, int item_len, short context);
+int                  dbx_escape_output       (DBXSTR *pdata, char *item, int item_len, short context);
+int                  dbx_escape_output16     (DBXSTR *pdata, unsigned short *item, int item_len, short context);
 
 #endif
 

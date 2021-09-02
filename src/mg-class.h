@@ -42,6 +42,9 @@ class mclass : public node::ObjectWrap
    int            dbx_count;
    int            oref;
    char           class_name[256];
+   int            class_name_len;
+   unsigned short class_name16[256];
+   int            class_name16_len;
    DBX_DBNAME     *c;
 
 

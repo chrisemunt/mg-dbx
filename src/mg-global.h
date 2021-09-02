@@ -40,6 +40,9 @@ public:
 
    int            dbx_count;
    char           global_name[256];
+   int            global_name_len;
+   unsigned short global_name16[256];
+   int            global_name16_len;
    DBXVAL         *pkey;
    DBX_DBNAME     *c;
 

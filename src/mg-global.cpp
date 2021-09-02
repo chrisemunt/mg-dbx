@@ -139,11 +139,14 @@ void mglobal::New(const FunctionCallbackInfo<Value>& args)
             return;
          }
          pcon = c->pcon;
-         pmeth = dbx_request_memory(pcon, 1);
+         pmeth = dbx_request_memory(pcon, 1, 1);
          pmeth->argc = argc;
          obj->c = c;
          obj->pkey = NULL;
          obj->global_name[0] = '\0';
+         obj->global_name_len = 0;
+         obj->global_name16[0] = 0;
+         obj->global_name16_len = 0;
          rc = dbx_global_reset(args, isolate, pcon, pmeth, (void *) obj, 1, 1);
          if (rc < 0) {
             isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The mglobal::New() method takes at least one argument (the global name)", 1)));
@@ -241,10 +244,13 @@ void mglobal::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) gx, (char *) "mglobal::get");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    pmeth->binary = binary;
    gref.global = gx->global_name;
+   gref.global_len = gx->global_name_len;
+   gref.global16 = gx->global_name16;
+   gref.global16_len = gx->global_name16_len;
    gref.pkey = gx->pkey;
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
@@ -324,7 +330,7 @@ void mglobal::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
       args.GetReturnValue().Set(bx);
    }
    else {
-      result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
+      result = pcon->utf16 ? dbx_new_string16n(isolate, pmeth->output_val.cvalue.buf16_addr, pmeth->output_val.cvalue.len_used) : dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
       args.GetReturnValue().Set(result);
    }
    dbx_request_memory_free(pcon, pmeth, 0);
@@ -350,9 +356,12 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) gx, (char *) "mglobal::set");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    gref.global = gx->global_name;
+   gref.global_len = gx->global_name_len;
+   gref.global16 = gx->global_name16;
+   gref.global16_len = gx->global_name16_len;
    gref.pkey = gx->pkey;
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
@@ -451,9 +460,12 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) gx, (char *) "mglobal::defined");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    gref.global = gx->global_name;
+   gref.global_len = gx->global_name_len;
+   gref.global16 = gx->global_name16;
+   gref.global16_len = gx->global_name16_len;
    gref.pkey = gx->pkey;
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
@@ -551,9 +563,12 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) gx, (char *) "mglobal::delete");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    gref.global = gx->global_name;
+   gref.global_len = gx->global_name_len;
+   gref.global16 = gx->global_name16;
+   gref.global16_len = gx->global_name16_len;
    gref.pkey = gx->pkey;
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
@@ -651,9 +666,12 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) gx, (char *) "mglobal::next");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    gref.global = gx->global_name;
+   gref.global_len = gx->global_name_len;
+   gref.global16 = gx->global_name16;
+   gref.global16_len = gx->global_name16_len;
    gref.pkey = gx->pkey;
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
@@ -724,7 +742,8 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) "mglobal::next");
    }
 
-   result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
+   result = pcon->utf16 ? dbx_new_string16n(isolate, pmeth->output_val.cvalue.buf16_addr, pmeth->output_val.cvalue.len_used) : dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
+
    args.GetReturnValue().Set(result);
    dbx_request_memory_free(pcon, pmeth, 0);
    return;
@@ -749,9 +768,12 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) gx, (char *) "mglobal::previous");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    gref.global = gx->global_name;
+   gref.global_len = gx->global_name_len;
+   gref.global16 = gx->global_name16;
+   gref.global16_len = gx->global_name16_len;
    gref.pkey = gx->pkey;
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
@@ -822,7 +844,7 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) "mglobal::previous");
    }
 
-   result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
+   result = pcon->utf16 ? dbx_new_string16n(isolate, pmeth->output_val.cvalue.buf16_addr, pmeth->output_val.cvalue.len_used) : dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
 
    args.GetReturnValue().Set(result);
    dbx_request_memory_free(pcon, pmeth, 0);
@@ -848,9 +870,12 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) gx, (char *) "mglobal::increment");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    gref.global = gx->global_name;
+   gref.global_len = gx->global_name_len;
+   gref.global16 = gx->global_name16;
+   gref.global16_len = gx->global_name16_len;
    gref.pkey = gx->pkey;
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
@@ -922,7 +947,7 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) "mglobal::increment");
    }
 
-   result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
+   result = pcon->utf16 ? dbx_new_string16n(isolate, pmeth->output_val.cvalue.buf16_addr, pmeth->output_val.cvalue.len_used) : dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
    dbx_request_memory_free(pcon, pmeth, 0);
    return;
@@ -949,9 +974,12 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) gx, (char *) "mglobal::lock");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    gref.global = gx->global_name;
+   gref.global_len = gx->global_name_len;
+   gref.global16 = gx->global_name16;
+   gref.global16_len = gx->global_name16_len;
    gref.pkey = gx->pkey;
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
@@ -1080,9 +1108,12 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) gx, (char *) "mglobal::unlock");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    gref.global = gx->global_name;
+   gref.global_len = gx->global_name_len;
+   gref.global16 = gx->global_name16;
+   gref.global16_len = gx->global_name16_len;
    gref.pkey = gx->pkey;
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
@@ -1193,7 +1224,7 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) gx, (char *) "mglobal::merge");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
 
@@ -1207,7 +1238,7 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
    mglobal1 = 0;
    pmeth->args[nx].type = DBX_DTYPE_STR;
    pmeth->args[nx].sort = DBX_DSORT_GLOBAL;
-   dbx_ibuffer_add(pmeth, isolate, nx, str, gx->global_name, (int) strlen(gx->global_name), 2);
+   gx->global_name16_len ? dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) gx->global_name16, (int) gx->global_name16_len, 1, 2) : dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) gx->global_name, (int) gx->global_name_len, 0, 2);
    nx ++;
    if ((pval = gx->pkey)) {
       while (pval) {
@@ -1217,10 +1248,13 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
             pmeth->args[nx].type = DBX_DTYPE_INT;
             pmeth->args[nx].num.int32 = (int) pval->num.int32;
             T_SPRINTF(buffer, _dbxso(buffer), "%d", pval->num.int32);
-            dbx_ibuffer_add(pmeth, isolate, nx, str, buffer, (int) strlen(buffer), 2);
+            dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) buffer, (int) strlen(buffer), 0, 2);
          }
          else {
-            dbx_ibuffer_add(pmeth, isolate, nx, str, pval->svalue.buf_addr, (int) pval->svalue.len_used, 2);
+            if (pval->type == DBX_DTYPE_STR16)
+               dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) pval->cvalue.buf16_addr, (int) pval->cvalue.len_used, 1, 2);
+            else
+               dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) pval->svalue.buf_addr, (int) pval->svalue.len_used, 0, 2);
          }
          nx ++;
          pval = pval->pnext;
@@ -1240,7 +1274,7 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
                gx1 = ObjectWrap::Unwrap<mglobal>(obj);
                pmeth->args[nx].type = DBX_DTYPE_STR;
                pmeth->args[nx].sort = DBX_DSORT_GLOBAL;
-               dbx_ibuffer_add(pmeth, isolate, nx, str, gx1->global_name, (int) strlen(gx1->global_name), 2);
+               gx->global_name16_len ? dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) gx1->global_name16, (int) gx1->global_name16_len, 1, 2) : dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) gx1->global_name, (int) strlen(gx1->global_name), 0, 2);
                nx ++;
                if ((pval = gx1->pkey)) {
                   while (pval) {
@@ -1250,10 +1284,13 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
                         pmeth->args[nx].type = DBX_DTYPE_INT;
                         pmeth->args[nx].num.int32 = (int) pval->num.int32;
                         T_SPRINTF(buffer, _dbxso(buffer), "%d", pval->num.int32);
-                        dbx_ibuffer_add(pmeth, isolate, nx, str, buffer, (int) strlen(buffer), 2);
+                        dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) buffer, (int) strlen(buffer), 0, 2);
                      }
                      else {
-                        dbx_ibuffer_add(pmeth, isolate, nx, str, pval->svalue.buf_addr, (int) pval->svalue.len_used, 2);
+                        if (pval->type == DBX_DTYPE_STR16)
+                           dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) pval->cvalue.buf16_addr, (int) pval->cvalue.len_used, 1, 2);
+                        else
+                           dbx_ibuffer_add(pmeth, isolate, nx, str, (void *) pval->svalue.buf_addr, (int) pval->svalue.len_used, 0, 2);
                      }
                      nx ++;
                      pval = pval->pnext;
@@ -1266,18 +1303,18 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
             if (otype == 2) {
                p = node::Buffer::Data(obj);
                len = (int) node::Buffer::Length(obj);
-               dbx_ibuffer_add(pmeth, isolate, nx ++, str, p, (int) len, 2);
+               dbx_ibuffer_add(pmeth, isolate, nx ++, str, (void *) p, (int) len, 0, 2);
             }
             else {
                str = DBX_TO_STRING(args[argc]);
-               dbx_ibuffer_add(pmeth, isolate, nx ++, str, NULL, 0, 2);
+               dbx_ibuffer_add(pmeth, isolate, nx ++, str, NULL, 0, 0, 2);
             }
          }
       }
       else {
          pmeth->args[nx].sort = DBX_DSORT_DATA;
          str = DBX_TO_STRING(args[argc]);
-         dbx_ibuffer_add(pmeth, isolate, nx ++, str, NULL, 0, 2);
+         dbx_ibuffer_add(pmeth, isolate, nx ++, str, NULL, 0, 0, 2);
       }
    }
 
@@ -1362,7 +1399,7 @@ void mglobal::Reset(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) gx, (char *) "mglobal::reset");
    }
-   pmeth = dbx_request_memory(pcon, 1);
+   pmeth = dbx_request_memory(pcon, 1, 1);
 
    pmeth->argc = args.Length();
 
@@ -1400,7 +1437,7 @@ void mglobal::Close(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) gx, (char *) "mglobal::close");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    pmeth->argc = args.Length();
 
@@ -1427,34 +1464,5 @@ void mglobal::Close(const FunctionCallbackInfo<Value>& args)
 */
    dbx_request_memory_free(pcon, pmeth, 0);
    return;
-}
-
-int dbx_escape_output(DBXSTR *pdata, char *item, int item_len, short context)
-{
-   int n;
-
-   if (context == 0) {
-      for (n = 0; n < item_len; n ++) {
-         pdata->buf_addr[pdata->len_used ++] = item[n];
-      }
-      return pdata->len_used;
-   }
-
-   for (n = 0; n < item_len; n ++) {
-      if (item[n] == '&') {
-         pdata->buf_addr[pdata->len_used ++] = '%';
-         pdata->buf_addr[pdata->len_used ++] = '2';
-         pdata->buf_addr[pdata->len_used ++] = '6';
-      }
-      else if (item[n] == '=') {
-         pdata->buf_addr[pdata->len_used ++] = '%';
-         pdata->buf_addr[pdata->len_used ++] = '3';
-         pdata->buf_addr[pdata->len_used ++] = 'D';
-      }
-      else {
-         pdata->buf_addr[pdata->len_used ++] = item[n];
-      }
-   }
-   return pdata->len_used;
 }
 

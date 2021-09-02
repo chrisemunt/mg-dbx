@@ -125,7 +125,7 @@ void mcursor::New(const FunctionCallbackInfo<Value>& args)
             return;
          }
          pcon = c->pcon;
-         pmeth = dbx_request_memory(pcon, 1);
+         pmeth = dbx_request_memory(pcon, 1, 1);
          pmeth->argc = argc;
          dbx_cursor_init((void *) obj);
          obj->c = c;
@@ -209,7 +209,7 @@ void mcursor::Execute(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) cx, (char *) "mcursor::execute");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    pmeth->psql = cx->psql;
 
@@ -300,7 +300,7 @@ void mcursor::Cleanup(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) cx, (char *) "mcursor::cleanup");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    pmeth->psql = cx->psql;
 
@@ -367,7 +367,7 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) cx, (char *) "mcursor::next");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
 
@@ -398,31 +398,34 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
       DBX_DBFUN_END(c);
       DBX_DB_UNLOCK();
 
-      if (cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used == 0) {
+      if (pcon->utf16 && cx->pqr_prev->keys[cx->pqr_prev->keyn - 1].cvalue.len_used == 0) {
+         args.GetReturnValue().Set(DBX_NULL());
+      }
+      else if (!pcon->utf16 && cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].len_used == 0) {
          args.GetReturnValue().Set(DBX_NULL());
       }
       else if (cx->getdata == 0) {
 /*
-         if (cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used && cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used < 10) {
+         if (cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].len_used && cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].len_used < 10) {
             int n;
             char buffer[32];
-            strncpy(buffer, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used);
-            buffer[cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used] = '\0';
+            strncpy(buffer, cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].len_used);
+            buffer[cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].len_used] = '\0';
             n = (int) strtol(buffer, NULL, 10);
             args.GetReturnValue().Set(DBX_INTEGER_NEW(n));
             return;
          }
 */
-         key = dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, pcon->utf8);
+         key = pcon->utf16 ? dbx_new_string16n(isolate, cx->pqr_prev->keys[cx->pqr_prev->keyn - 1].cvalue.buf16_addr, cx->pqr_prev->keys[cx->pqr_prev->keyn - 1].cvalue.len_used) : dbx_new_string8n(isolate, cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].len_used, pcon->utf8);
          args.GetReturnValue().Set(key);
       }
       else {
          if (cx->format == 1) {
             cx->data.len_used = 0;
             dbx_escape_output(&(cx->data), (char *) "key=", 4, 0);
-            dbx_escape_output(&(cx->data), cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, 1);
+            pcon->utf16 ? dbx_escape_output16(&(cx->data), cx->pqr_prev->keys[cx->pqr_prev->keyn - 1].cvalue.buf16_addr, cx->pqr_prev->keys[cx->pqr_prev->keyn - 1].cvalue.len_used, 1) : dbx_escape_output(&(cx->data), cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].len_used, 1);
             dbx_escape_output(&(cx->data), (char *) "&data=", 6, 0);
-            dbx_escape_output(&(cx->data), cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 1);
+            pcon->utf16 ? dbx_escape_output16(&(cx->data), cx->pqr_prev->data.cvalue.buf16_addr, cx->pqr_prev->data.cvalue.len_used, 1) : dbx_escape_output(&(cx->data), cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 1);
             key = dbx_new_string8n(isolate, (char *) cx->data.buf_addr, cx->data.len_used, 0);
             args.GetReturnValue().Set(key);
          }
@@ -430,9 +433,9 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
             obj = DBX_OBJECT_NEW();
 
             key = dbx_new_string8(isolate, (char *) "key", 0);
-            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, pcon->utf8));
+            DBX_SET(obj, key, pcon->utf16 ? dbx_new_string16n(isolate, cx->pqr_prev->keys[cx->pqr_prev->keyn - 1].cvalue.buf16_addr, cx->pqr_prev->keys[cx->pqr_prev->keyn - 1].cvalue.len_used) : dbx_new_string8n(isolate, cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].len_used, pcon->utf8));
             key = dbx_new_string8(isolate, (char *) "data", 0);
-            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 0));
+            DBX_SET(obj, key, pcon->utf16 ?  dbx_new_string16n(isolate, cx->pqr_prev->data.cvalue.buf16_addr, cx->pqr_prev->data.cvalue.len_used) : dbx_new_string8n(isolate, cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 0));
             args.GetReturnValue().Set(obj);
          }
       }
@@ -455,13 +458,13 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
          for (n = 0; n < cx->pqr_next->keyn; n ++) {
             sprintf(buffer, (char *) "%skey%d=", delim, n + 1);
             dbx_escape_output(&(cx->data), buffer, (int) strlen(buffer), 0);
-            dbx_escape_output(&(cx->data), cx->pqr_next->key[n].buf_addr, cx->pqr_next->key[n].len_used, 1);
+            pcon->utf16 ? dbx_escape_output16(&(cx->data), cx->pqr_next->keys[n].cvalue.buf16_addr, cx->pqr_next->keys[n].cvalue.len_used, 1) : dbx_escape_output(&(cx->data), cx->pqr_next->ykeys[n].buf_addr, cx->pqr_next->ykeys[n].len_used, 1);
             strcpy(delim, (char *) "&");
          }
          if (cx->getdata) {
             sprintf(buffer, (char *) "%sdata=", delim);
             dbx_escape_output(&(cx->data), buffer, (int) strlen(buffer), 0);
-            dbx_escape_output(&(cx->data), cx->pqr_next->data.svalue.buf_addr, cx->pqr_next->data.svalue.len_used, 1);
+            pcon->utf16 ? dbx_escape_output16(&(cx->data), cx->pqr_next->data.cvalue.buf16_addr, cx->pqr_next->data.cvalue.len_used, 1) : dbx_escape_output(&(cx->data), cx->pqr_next->data.svalue.buf_addr, cx->pqr_next->data.svalue.len_used, 1);
          }
 
          key = dbx_new_string8n(isolate, (char *) cx->data.buf_addr, cx->data.len_used, 0);
@@ -474,11 +477,11 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
          DBX_SET(obj, key, a);
 
          for (n = 0; n < cx->pqr_next->keyn; n ++) {
-            DBX_SET(a, n, dbx_new_string8n(isolate, cx->pqr_next->key[n].buf_addr, cx->pqr_next->key[n].len_used, 0));
+            DBX_SET(a, n, pcon->utf16 ? dbx_new_string16n(isolate, cx->pqr_next->keys[n].cvalue.buf16_addr, cx->pqr_next->keys[n].cvalue.len_used) : dbx_new_string8n(isolate, cx->pqr_next->ykeys[n].buf_addr, cx->pqr_next->ykeys[n].len_used, 0));
          }
          if (cx->getdata) {
             key = dbx_new_string8(isolate, (char *) "data", 0);
-            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_next->data.svalue.buf_addr, cx->pqr_next->data.svalue.len_used, 0));
+            DBX_SET(obj, key, pcon->utf16 ? dbx_new_string16n(isolate, cx->pqr_next->data.cvalue.buf16_addr, cx->pqr_next->data.cvalue.len_used) : dbx_new_string8n(isolate, cx->pqr_next->data.svalue.buf_addr, cx->pqr_next->data.svalue.len_used, 0));
          }
       }
 
@@ -513,7 +516,7 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
          args.GetReturnValue().Set(DBX_NULL());
       }
       else {
-         key = dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, pcon->utf8);
+         key = pcon->utf16 ? dbx_new_string16n(isolate, cx->pqr_prev->global_name16.cvalue.buf16_addr, cx->pqr_prev->global_name16.cvalue.len_used) : dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, pcon->utf8);
          args.GetReturnValue().Set(key);
       }
       dbx_request_memory_free(pcon, pmeth, 0);
@@ -558,6 +561,9 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
       dbx_request_memory_free(pcon, pmeth, 0);
       return;
    }
+   else {
+      args.GetReturnValue().Set(DBX_NULL());
+   }
    dbx_request_memory_free(pcon, pmeth, 0);
    return;
 }
@@ -582,7 +588,7 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) cx, (char *) "mcursor::previous");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    DBX_CALLBACK_FUN(pmeth->argc, async);
 
@@ -613,20 +619,23 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
       DBX_DBFUN_END(c);
       DBX_DB_UNLOCK();
 
-      if (cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used == 0) {
+      if (pcon->utf16 && cx->pqr_prev->keys[cx->pqr_prev->keyn - 1].cvalue.len_used == 0) {
+         args.GetReturnValue().Set(DBX_NULL());
+      }
+      else if (!pcon->utf16 && cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].len_used == 0) {
          args.GetReturnValue().Set(DBX_NULL());
       }
       else if (cx->getdata == 0) {
-         key = dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, pcon->utf8);
+         key = pcon->utf16 ? dbx_new_string16n(isolate, cx->pqr_prev->keys[cx->pqr_prev->keyn - 1].cvalue.buf16_addr, cx->pqr_prev->keys[cx->pqr_prev->keyn - 1].cvalue.len_used) : dbx_new_string8n(isolate, cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].len_used, pcon->utf8);
          args.GetReturnValue().Set(key);
       }
       else {
          if (cx->format == 1) {
             cx->data.len_used = 0;
             dbx_escape_output(&cx->data, (char *) "key=", 4, 0);
-            dbx_escape_output(&cx->data, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, 1);
+            pcon->utf16 ? dbx_escape_output16(&cx->data, cx->pqr_prev->keys[cx->pqr_prev->keyn - 1].cvalue.buf16_addr, cx->pqr_prev->keys[cx->pqr_prev->keyn - 1].cvalue.len_used, 1) : dbx_escape_output(&cx->data, cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].len_used, 1);
             dbx_escape_output(&cx->data, (char *) "&data=", 6, 0);
-            dbx_escape_output(&cx->data, cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 1);
+            pcon->utf16 ? dbx_escape_output16(&cx->data, cx->pqr_prev->data.cvalue.buf16_addr, cx->pqr_prev->data.cvalue.len_used, 1) : dbx_escape_output(&cx->data, cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 1);
             key = dbx_new_string8n(isolate, (char *) cx->data.buf_addr, cx->data.len_used, 0);
             args.GetReturnValue().Set(key);
          }
@@ -634,9 +643,9 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
             obj = DBX_OBJECT_NEW();
 
             key = dbx_new_string8(isolate, (char *) "key", 0);
-            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->key[cx->pqr_prev->keyn - 1].len_used, pcon->utf8));
+            DBX_SET(obj, key, pcon->utf16 ? dbx_new_string16n(isolate, cx->pqr_prev->keys[cx->pqr_prev->keyn - 1].cvalue.buf16_addr, cx->pqr_prev->keys[cx->pqr_prev->keyn - 1].cvalue.len_used) : dbx_new_string8n(isolate, cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].buf_addr, cx->pqr_prev->ykeys[cx->pqr_prev->keyn - 1].len_used, pcon->utf8));
             key = dbx_new_string8(isolate, (char *) "data", 0);
-            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 0));
+            DBX_SET(obj, key, pcon->utf16 ? dbx_new_string16n(isolate, cx->pqr_prev->data.cvalue.buf16_addr, cx->pqr_prev->data.cvalue.len_used) : dbx_new_string8n(isolate, cx->pqr_prev->data.svalue.buf_addr, cx->pqr_prev->data.svalue.len_used, 0));
             args.GetReturnValue().Set(obj);
          }
       }
@@ -659,13 +668,13 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
          for (n = 0; n < cx->pqr_next->keyn; n ++) {
             sprintf(buffer, (char *) "%skey%d=", delim, n + 1);
             dbx_escape_output(&(cx->data), buffer, (int) strlen(buffer), 0);
-            dbx_escape_output(&(cx->data), cx->pqr_next->key[n].buf_addr, cx->pqr_next->key[n].len_used, 1);
+            pcon->utf16 ? dbx_escape_output16(&(cx->data), cx->pqr_next->keys[n].cvalue.buf16_addr, cx->pqr_next->keys[n].cvalue.len_used, 1) : dbx_escape_output(&(cx->data), cx->pqr_next->ykeys[n].buf_addr, cx->pqr_next->ykeys[n].len_used, 1);
             strcpy(delim, (char *) "&");
          }
          if (cx->getdata) {
             sprintf(buffer, (char *) "%sdata=", delim);
             dbx_escape_output(&(cx->data), buffer, (int) strlen(buffer), 0);
-            dbx_escape_output(&(cx->data), cx->pqr_next->data.svalue.buf_addr, cx->pqr_next->data.svalue.len_used, 1);
+            pcon->utf16 ? dbx_escape_output16(&(cx->data), cx->pqr_next->data.cvalue.buf16_addr, cx->pqr_next->data.cvalue.len_used, 1) : dbx_escape_output(&(cx->data), cx->pqr_next->data.svalue.buf_addr, cx->pqr_next->data.svalue.len_used, 1);
          }
 
          key = dbx_new_string8n(isolate, (char *) cx->data.buf_addr, cx->data.len_used, 0);
@@ -673,18 +682,19 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
       }
       else {
          obj = DBX_OBJECT_NEW();
-
+/*
          key = dbx_new_string8(isolate, (char *) "global", 0);
-         DBX_SET(obj, key, dbx_new_string8(isolate, cx->pqr_next->global_name.buf_addr, 0));
+         DBX_SET(obj, key, pcon->utf16 ? dbx_new_string16n(isolate, cx->pqr_next->global_name16.cvalue.buf16_addr, cx->pqr_next->global_name16.cvalue.len_used) : dbx_new_string8(isolate, cx->pqr_next->global_name.buf_addr, 0));
+*/
          key = dbx_new_string8(isolate, (char *) "key", 0);
          Local<Array> a = DBX_ARRAY_NEW(cx->pqr_next->keyn);
          DBX_SET(obj, key, a);
          for (n = 0; n < cx->pqr_next->keyn; n ++) {
-            DBX_SET(a, n, dbx_new_string8n(isolate, cx->pqr_next->key[n].buf_addr, cx->pqr_next->key[n].len_used, 0));
+            DBX_SET(a, n, pcon->utf16 ? dbx_new_string16n(isolate, cx->pqr_next->keys[n].cvalue.buf16_addr, cx->pqr_next->keys[n].cvalue.len_used) : dbx_new_string8n(isolate, cx->pqr_next->ykeys[n].buf_addr, cx->pqr_next->ykeys[n].len_used, 0));
          }
          if (cx->getdata) {
             key = dbx_new_string8(isolate, (char *) "data", 0);
-            DBX_SET(obj, key, dbx_new_string8n(isolate, cx->pqr_next->data.svalue.buf_addr, cx->pqr_next->data.svalue.len_used, 0));
+            DBX_SET(obj, key, pcon->utf16 ? dbx_new_string16n(isolate, cx->pqr_next->data.cvalue.buf16_addr, cx->pqr_next->data.cvalue.len_used) : dbx_new_string8n(isolate, cx->pqr_next->data.svalue.buf_addr, cx->pqr_next->data.svalue.len_used, 0));
          }
       }
 
@@ -719,7 +729,7 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
          args.GetReturnValue().Set(DBX_NULL());
       }
       else {
-         key = dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, pcon->utf8);
+         key = pcon->utf16 ? dbx_new_string16n(isolate, cx->pqr_prev->global_name16.cvalue.buf16_addr, cx->pqr_prev->global_name16.cvalue.len_used) : dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, pcon->utf8);
          args.GetReturnValue().Set(key);
       }
       dbx_request_memory_free(pcon, pmeth, 0);
@@ -763,6 +773,9 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
       dbx_request_memory_free(pcon, pmeth, 0);
       return;
    }
+   else {
+      args.GetReturnValue().Set(DBX_NULL());
+   }
    dbx_request_memory_free(pcon, pmeth, 0);
    return;
 }
@@ -783,7 +796,7 @@ void mcursor::Reset(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) cx, (char *) "mcursor::reset");
    }
-   pmeth = dbx_request_memory(pcon, 1);
+   pmeth = dbx_request_memory(pcon, 1, 1);
 
    pmeth->argc = args.Length();
 
@@ -821,7 +834,7 @@ void mcursor::Close(const FunctionCallbackInfo<Value>& args)
    if (pcon->log_functions) {
       c->LogFunction(c, args, (void *) cx, (char *) "mcursor::close");
    }
-   pmeth = dbx_request_memory(pcon, 0);
+   pmeth = dbx_request_memory(pcon, 1, 0);
 
    pmeth->argc = args.Length();
 
@@ -876,3 +889,62 @@ void mcursor::Close(const FunctionCallbackInfo<Value>& args)
    return;
 }
 
+int dbx_escape_output(DBXSTR *pdata, char *item, int item_len, short context)
+{
+   int n;
+
+   if (context == 0) {
+      for (n = 0; n < item_len; n ++) {
+         pdata->buf_addr[pdata->len_used ++] = item[n];
+      }
+      return pdata->len_used;
+   }
+
+   for (n = 0; n < item_len; n ++) {
+      if (item[n] == '&') {
+         pdata->buf_addr[pdata->len_used ++] = '%';
+         pdata->buf_addr[pdata->len_used ++] = '2';
+         pdata->buf_addr[pdata->len_used ++] = '6';
+      }
+      else if (item[n] == '=') {
+         pdata->buf_addr[pdata->len_used ++] = '%';
+         pdata->buf_addr[pdata->len_used ++] = '3';
+         pdata->buf_addr[pdata->len_used ++] = 'D';
+      }
+      else {
+         pdata->buf_addr[pdata->len_used ++] = item[n];
+      }
+   }
+   return pdata->len_used;
+}
+
+
+int dbx_escape_output16(DBXSTR *pdata, unsigned short *item, int item_len, short context)
+{
+   int n;
+
+   /* TODO escape Unicode characters */
+   if (context == 0) {
+      for (n = 0; n < item_len; n ++) {
+         pdata->buf_addr[pdata->len_used ++] = (char) item[n];
+      }
+      return pdata->len_used;
+   }
+
+   for (n = 0; n < item_len; n ++) {
+      if (item[n] == 38) { /* & */
+         pdata->buf_addr[pdata->len_used ++] = '%';
+         pdata->buf_addr[pdata->len_used ++] = '2';
+         pdata->buf_addr[pdata->len_used ++] = '6';
+      }
+      else if (item[n] == 61) { /* = */
+         pdata->buf_addr[pdata->len_used ++] = '%';
+         pdata->buf_addr[pdata->len_used ++] = '3';
+         pdata->buf_addr[pdata->len_used ++] = 'D';
+      }
+      else {
+         pdata->buf_addr[pdata->len_used ++] = (char) item[n];
+      }
+   }
+   return pdata->len_used;
+}
