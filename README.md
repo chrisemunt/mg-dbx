@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-22 April 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+2 September 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v16.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -83,7 +83,7 @@ Change to your development UCI and check the installation:
        do ^%zmgsi
 
        M/Gateway Developments Ltd - Service Integration Gateway
-       Version: 4.2; Revision 20 (20 April 2021)
+       Version: 4.4; Revision 25 (2 September 2021)
 
 
 #### Installation for YottaDB
@@ -112,7 +112,7 @@ Link all the **zmgsi** routines and check the installation:
        do ^%zmgsi
 
        M/Gateway Developments Ltd - Service Integration Gateway
-       Version: 4.2; Revision 20 (20 April 2021)
+       Version: 4.4; Revision 25 (2 September 2021)
 
 Note that the version of **zmgsi** is successfully displayed.
 
@@ -255,7 +255,7 @@ Assuming YottaDB is accessed via **localhost** listening on TCP port **7041**
 
 * **timeout**: The timeout (in seconds) to be applied to database operations invoked via network based connections.  The default value is 10 seconds.
 
-* **dberror_exceptions**: A boolean value to be set to 'true' or 'false' (default: **dberror_exceptions: false**).  Set this property to 'true' to instruct **mg\-dbx** to throw Node.js exceptions if synchronous invocation of database operations result in an error condition.  If this property is not set, any error condition resulting from the previous database operation can be retrieved using the **db.geterrormessage()** method.
+* **dberror\_exceptions**: A boolean value to be set to 'true' or 'false' (default: **dberror_exceptions: false**).  Set this property to 'true' to instruct **mg\-dbx** to throw Node.js exceptions if synchronous invocation of database operations result in an error condition.  If this property is not set, any error condition resulting from the previous database operation can be retrieved using the **db.geterrormessage()** method.
 
 
 ### Return the version of mg-dbx
@@ -286,7 +286,7 @@ Example 2 (Change the current Namespace):
 
 ### Returning (and optionally changing) the current character set
 
-UTF-8 is the default character encoding for **mg-dbx**.  The other option is the 8-bit ASCII character set (characters of the range ASCII 0 to ASCII 255).  The ASCII character set is a better option when exchanging single-byte binary data with the database.
+UTF-8 is the default character encoding for **mg-dbx**.  The other option is the 8-bit ASCII character set (characters of the range ASCII 0 to ASCII 255).  Native Unicode (as UTF-16) is supported for InterSystems DB Servers. The ASCII character set is a better option when exchanging single-byte binary data with the database.
 
        current_charset = db.charset([<new_charset>]);
 
@@ -298,8 +298,12 @@ Example 2 (Change the current character set):
 
        var new_charset = db.charset('ascii');
 
+Example 3 (Native Unicode support for InterSystems DB Servers): 
+
+       var new_charset = db.charset('utf-16');
+
 * If the operation is successful this method will echo back the new character set name.  If not successful, the method will return the name of the current (unchanged) character set.
-* Currently supported character sets and encoding schemes: 'ascii' and 'utf-8'.
+* Currently supported character sets and encoding schemes: 'ascii', 'utf-8' and 'utf-16' for InterSystems DB Servers.
 
 
 ### Setting (or resetting) the timeout for the connection
@@ -1187,3 +1191,10 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v2.3.25a (22 April 2021)
 
 * Verify that **mg-dbx** will build and work with Node.js v16.x.x.
+
+### v2.4.26 (2 September 2021)
+
+* Introduce native Unicode support for InterSystems DB Servers - as character set/encoding UTF-16.
+	* db.charset('utf-16')
+* For network-based connectivity, DB Superserver version 4.4.25 (or later) should be used.
+* This update should be regarded as a beta-release. It is recommended that only those who need native support for Unicode on InterSystems DB Servers should upgrade to this release at this time. 
