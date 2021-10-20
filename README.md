@@ -3,9 +3,9 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-2 September 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+20 October 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* Verified to work with Node.js v8 to v16.
+* Verified to work with Node.js v8 to v17.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
@@ -1197,4 +1197,8 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Introduce native Unicode support for InterSystems DB Servers - as character set/encoding UTF-16.
 	* db.charset('utf-16')
 * For network-based connectivity, DB Superserver version 4.4.25 (or later) should be used.
-* This update should be regarded as a beta-release. It is recommended that only those who need native support for Unicode on InterSystems DB Servers should upgrade to this release at this time. 
+* This update should be regarded as a beta-release. It is recommended that only those who need native support for Unicode on InterSystems DB Servers should upgrade to this release at this time.
+
+### v2.4.27 (20 October 2021)
+
+* Verify that **mg-dbx** will build and work with Node.js v17.x.x.
