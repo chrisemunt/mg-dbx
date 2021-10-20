@@ -19,7 +19,7 @@
    | distributed under the License is distributed on an "AS IS" BASIS,        |
    | WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. |
    | See the License for the specific language governing permissions and      |
-   | limitations under the License.                                           |      
+   | limitations under the License.                                           |
    |                                                                          |
    ----------------------------------------------------------------------------
 */
@@ -153,7 +153,14 @@ Version 2.3.25 11 March 2021:
 Version 2.3.25a 22 April 2021:
    Verify that mg-dbx will build and work with Node.js v16.x.x. (ABI: 93).
 
-Version 2.4.26 2 September 2021: // cmtxxx
+Version 2.4.26 2 September 2021:
+   Introduce native Unicode support for InterSystems DB Servers - as character set/encoding UTF-16.
+	   db.charset('utf-16')
+      For network-based connectivity, DB Superserver version 4.4.25 (or later) should be used.
+      This update should be regarded as a beta-release.
+
+Version 2.4.27 20 October 2021:
+   Verify that mg-dbx will build and work with Node.js v17.x.x. (ABI: 102).
 
 */
 
