@@ -1021,7 +1021,7 @@ Logging can be switched off by calling the **setloglevel** function without spec
 
 ## <a name="License"></a> License
 
-Copyright (c) 2018-2021 M/Gateway Developments Ltd,
+Copyright (c) 2018-2022 M/Gateway Developments Ltd,
 Surrey UK.                                                      
 All rights reserved.
  
