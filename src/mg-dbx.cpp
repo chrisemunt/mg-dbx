@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2021 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2022 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -161,6 +161,9 @@ Version 2.4.26 2 September 2021:
 
 Version 2.4.27 20 October 2021:
    Verify that mg-dbx will build and work with Node.js v17.x.x. (ABI: 102).
+
+Version 2.4.27a 25 April 2022:
+   Verify that mg-dbx will build and work with Node.js v18.x.x. (ABI: 108).
 
 */
 

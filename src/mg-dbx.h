@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2021 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2022 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -203,6 +203,8 @@ DISABLE_WCAST_FUNCTION_TYPE
 #define DBX_CMND_CGETP           42
 #define DBX_CMND_CSETP           43
 #define DBX_CMND_CMETH           44
+/* cmtxxx */
+#define DBX_CMND_CCLOSE          45
 
 #define DBX_CMND_GNAMENEXT       51
 #define DBX_CMND_GNAMEPREVIOUS   52
