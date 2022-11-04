@@ -3,9 +3,9 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-25 April 2022, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+4 November 2022, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* Verified to work with Node.js v8 to v18.
+* Verified to work with Node.js v8 to v19.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
@@ -61,6 +61,9 @@ Assuming that Node.js is already installed and a C++ compiler is available to th
 
 This command will create the **mg-dbx** addon (*mg-dbx.node*).
 
+### Enabling the API for InterSystems IRIS and Cache
+
+Before connecting to a local (relative to Node.js) InterSystems database via its API, check that the InterSystems ***'Callin API'*** is enabled.  From the InterSystems Database Management Portal select ***System Administration***; then ***Security***; then ***Services***.  Look for the row containing ***%Service_Callin*** and check that it is ***Enabled***.  Edit the row and mark this service as ***Enabled*** if necessary.
 
 ### Installing the M support routines (also known as the DB Superserver)
 
@@ -69,6 +72,8 @@ The M support routines are required for:
 * Network based access to databases.
 * Direct access to SQL (either via the API or via the network).
 * The Merge command under YottaDB (either via the API or via the network).
+
+If none of the above apply you do not need to install these routines - proceed to  [Connecting to the database](#Connect). 
 
 Two M routines need to be installed (%zmgsi and %zmgsis).  These can be found in the *Service Integration Gateway* (**mgsi**) GitHub source code repository ([https://github.com/chrisemunt/mgsi](https://github.com/chrisemunt/mgsi)).  Note that it is not necessary to install the whole *Service Integration Gateway*, just the two M routines held in that repository.
 
@@ -1206,4 +1211,8 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v2.4.27a (25 April 2022)
 
 * Verify that **mg-dbx** will build and work with Node.js v18.x.x.
+
+### v2.4.27b (4 November 2022)
+
+* Verify that **mg-dbx** will build and work with Node.js v19.x.x.
 
