@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2022 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2023 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -167,6 +167,9 @@ Version 2.4.27a 25 April 2022:
 
 Version 2.4.27b 4 November 2022:
    Verify that mg-dbx will build and work with Node.js v19.x.x. (ABI: 111).
+
+Version 2.4.27c 3 May 2023:
+   Verify that mg-dbx will build and work with Node.js v20.x.x. (ABI: 115).
 
 */
 
@@ -7213,6 +7216,7 @@ __try {
 
          if (pcon->p_isc_so->loaded) {
             /* pcon->p_isc_so->p_CacheEnd(); */
+            pcon->p_isc_so->p_CacheEnd();
             dbx_dso_unload(pcon->p_isc_so->p_library);
             pcon->p_isc_so->p_library = NULL;
             pcon->p_isc_so->loaded = 0;
