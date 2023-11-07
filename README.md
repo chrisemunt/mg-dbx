@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-22 June 2023, MGateway Ltd [http://www.mgateway.com](http://www.mgateway.com)
+7 November 2023, MGateway Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v20.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -1223,3 +1223,8 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v2.4.27d (22 June 2023)
 
 * Documentation update.
+
+### v2.4.28 (7 November 2023)
+
+* Correct a fault affecting the return of Unicode data to Node.js through SQL.
+
