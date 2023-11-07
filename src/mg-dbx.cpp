@@ -171,6 +171,12 @@ Version 2.4.27b 4 November 2022:
 Version 2.4.27c 3 May 2023:
    Verify that mg-dbx will build and work with Node.js v20.x.x. (ABI: 115).
 
+Version 2.4.27d 22 June 2023:
+   Documentation update.
+
+Version 2.4.28 7 November 2023:
+   Correct a fault affecting the return of Unicode data to Node.js through SQL.
+
 */
 
 
@@ -9114,6 +9120,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
 int dbx_sql_execute(DBXMETH *pmeth)
 {
    int rc, len, dsort, dtype, cn, no_cols;
+   short utf16;
    unsigned long offset;
    char label[16], routine[16], params[9], buffer[8];
    DBXFUN fun;
@@ -9129,6 +9136,9 @@ __try {
    strcpy(pmeth->psql->sqlstate, "00000");
 
    strcpy(params, "");
+   if (pcon->utf8 == 2) { /* v2.4.28 */
+      strcat(params,";utf16");
+   }
    if (pmeth->psql->sql_type == DBX_SQL_ISCSQL) {
       strcpy(label, "sqleisc");
    }
@@ -9154,13 +9164,15 @@ __try {
 
    if (pcon->log_transmissions) {
       int nx;
+      char label_log[64]; /* v2.4.28 */
       v8::Local<v8::String> str;
 
       pmeth->ibuffer_used = 0;
       nx = 0;
-      strcat(label, "^");
-      strcat(label, routine);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) label, (int) strlen(label), 0, 0);
+      strcpy(label_log, label);
+      strcat(label_log, "^");
+      strcat(label_log, routine);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) label_log, (int) strlen(label_log), 0, 0);
       sprintf(buffer, "%d", pmeth->psql->sql_no);
       dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) buffer, (int) strlen(buffer), 0, 0);
       dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) pmeth->psql->sql_script, (int) strlen(pmeth->psql->sql_script), 0, 0);
@@ -9224,7 +9236,11 @@ __try {
       rc = pcon->p_isc_so->p_CachePushStr((int) strlen(params), (Callin_char_t *) params);
       rc = pcon->p_isc_so->p_CacheExtFun(fun.rflag, 3);
       if (rc == CACHE_SUCCESS) {
+         /* v2.4.28 */
+         utf16 = pcon->utf16;
+         pcon->utf16 = 0;
          isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
+         pcon->utf16 = utf16;
       }
       isc_cleanup(pmeth);
    }
@@ -9320,6 +9336,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
 int dbx_sql_row(DBXMETH *pmeth, int rn, int dir)
 {
    int rc, len, dsort, dtype, row_no, eod;
+   short utf16;
    unsigned long offset;
    char label[16], routine[16], params[9], buffer[8], rowstr[8];
    DBXFUN fun;
@@ -9339,6 +9356,11 @@ __try {
       strcpy(params, "-1");
    else
       strcpy(params, "");
+
+   if (pcon->utf8 == 2) { /* v2.4.28 */
+      strcat(params,";utf16");
+   }
+
    strcpy(label, "sqlrow");
 
    strcpy(routine, "%zmgsis");
@@ -9355,13 +9377,14 @@ __try {
 
    if (pcon->log_transmissions) {
       int nx;
+      char label_log[64]; /* v2.4.28 */
       v8::Local<v8::String> str;
 
       pmeth->ibuffer_used = 0;
       nx = 0;
-      strcat(label, "^");
-      strcat(label, routine);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) label, (int) strlen(label), 0, 0);
+      strcat(label_log, "^");
+      strcat(label_log, routine);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) label_log, (int) strlen(label_log), 0, 0);
       sprintf(buffer, "%d", pmeth->psql->sql_no);
       dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) buffer, (int) strlen(buffer), 0, 0);
       sprintf(rowstr, "%d", rn);
@@ -9428,7 +9451,11 @@ __try {
       rc = pcon->p_isc_so->p_CachePushStr((int) strlen(params), (Callin_char_t *) params);
       rc = pcon->p_isc_so->p_CacheExtFun(fun.rflag, 3);
       if (rc == CACHE_SUCCESS) {
+         /* v2.4.28 */
+         utf16 = pcon->utf16;
+         pcon->utf16 = 0;
          isc_pop_value(pmeth, &(pmeth->output_val), DBX_DTYPE_STR);
+         pcon->utf16 = utf16;
       }
       isc_cleanup(pmeth);
    }
@@ -9478,9 +9505,9 @@ __try {
    row_no = (int) strtol(buffer, NULL, 10);
    pmeth->psql->row_no = row_no;
    pmeth->output_val.offs = offset;
-
-   /* printf("\r\nROW NUMBER: len=%d; row_no=%d; pmeth->output_val.offs=%d; total=%d;", len, row_no, pmeth->output_val.offs, pmeth->output_val.svalue.len_used); */
-
+/*
+   printf("\r\nROW NUMBER: len=%d; row_no=%d; pmeth->output_val.offs=%d; total=%d;", len, row_no, pmeth->output_val.offs, pmeth->output_val.svalue.len_used);
+*/
 dbx_sql_row_exit:
 
    return eod;
@@ -9522,6 +9549,10 @@ __try {
    strcpy(pmeth->psql->sqlstate, "00000");
    pmeth->output_val.offs = 0;
    strcpy(params, "");
+   if (pcon->utf8 == 2) { /* v2.4.28 */
+      strcat(params,";utf16");
+   }
+
    strcpy(label, "sqldel");
 
    strcpy(routine, "%zmgsis");
@@ -9538,13 +9569,14 @@ __try {
 
    if (pcon->log_transmissions) {
       int nx;
+      char label_log[64]; /* v2.4.28 */
       v8::Local<v8::String> str;
 
       pmeth->ibuffer_used = 0;
       nx = 0;
-      strcat(label, "^");
-      strcat(label, routine);
-      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) label, (int) strlen(label), 0, 0);
+      strcat(label_log, "^");
+      strcat(label_log, routine);
+      dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) label_log, (int) strlen(label_log), 0, 0);
       sprintf(buffer, "%d", pmeth->psql->sql_no);
       dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) buffer, (int) strlen(buffer), 0, 0);
       dbx_ibuffer_add(pmeth, NULL, nx ++, str, (void *) params, (int) strlen(params), 0, 0);

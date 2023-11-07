@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "2"
 #define DBX_VERSION_MINOR        "4"
-#define DBX_VERSION_BUILD        "27"
+#define DBX_VERSION_BUILD        "28"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -203,7 +203,7 @@ DISABLE_WCAST_FUNCTION_TYPE
 #define DBX_CMND_CGETP           42
 #define DBX_CMND_CSETP           43
 #define DBX_CMND_CMETH           44
-/* cmtxxx */
+/* v2.4.28 */
 #define DBX_CMND_CCLOSE          45
 
 #define DBX_CMND_GNAMENEXT       51

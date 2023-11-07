@@ -552,7 +552,8 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
             }
 
             key = dbx_new_string8n(isolate, (char *) pmeth->psql->cols[n]->name.buf_addr, pmeth->psql->cols[n]->name.len_used, 0);
-            DBX_SET(obj, key, dbx_new_string8n(isolate,  pmeth->output_val.svalue.buf_addr + pmeth->output_val.offs, len, 0));
+            /* v2.4.28 add utf8 flag */
+            DBX_SET(obj, key, dbx_new_string8n(isolate,  pmeth->output_val.svalue.buf_addr + pmeth->output_val.offs, len, pcon->utf8));
             pmeth->output_val.offs += len;
          }
 
