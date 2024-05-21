@@ -3,9 +3,9 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-7 November 2023, MGateway Ltd [http://www.mgateway.com](http://www.mgateway.com)
+21 May 2024, MGateway Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* Verified to work with Node.js v8 to v20.
+* Verified to work with Node.js v8 to v22.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
@@ -16,6 +16,7 @@ Contents
 * [Connecting to the database](#Connect)
 * [Invocation of database commands](#DBCommands)
 * [Invocation of database functions](#DBFunctions)
+* [Cursor based data retrieval](#Cursors)
 * [Transaction Processing](#TProcessing)
 * [Direct access to InterSystems classes (IRIS and Cache)](#DBClasses)
 * [Direct access to SQL: MGSQL and InterSystems SQL (IRIS and Cache)](#DBSQL)
@@ -88,26 +89,26 @@ Change to your development UCI and check the installation:
        do ^%zmgsi
 
        MGateway Ltd - Service Integration Gateway
-       Version: 4.5; Revision 28 (3 February 2023)
+       Version: 4.5; Revision 31 (18 November 2023)
 
 
 #### Installation for YottaDB
 
-The instructions given here assume a standard 'out of the box' installation of **YottaDB** (version 1.30) deployed in the following location:
+The instructions given here assume a standard 'out of the box' installation of **YottaDB** (version 1.38) deployed in the following location:
 
-       /usr/local/lib/yottadb/r130
+       /usr/local/lib/yottadb/r138
 
 The primary default location for routines:
 
-       /root/.yottadb/r1.30_x86_64/r
+       /root/.yottadb/r1.38_x86_64/r
 
 Copy all the routines (i.e. all files with an 'm' extension) held in the GitHub **/yottadb** directory to:
 
-       /root/.yottadb/r1.30_x86_64/r
+       /root/.yottadb/r1.38_x86_64/r
 
 Change directory to the following location and start a **YottaDB** command shell:
 
-       cd /usr/local/lib/yottadb/r130
+       cd /usr/local/lib/yottadb/r138
        ./ydb
 
 Link all the **zmgsi** routines and check the installation:
@@ -117,7 +118,7 @@ Link all the **zmgsi** routines and check the installation:
        do ^%zmgsi
 
        MGateway Ltd - Service Integration Gateway
-       Version: 4.5; Revision 28 (3 February 2023)
+       Version: 4.5; Revision 31 (18 November 2023)
 
 Note that the version of **zmgsi** is successfully displayed.
 
@@ -227,19 +228,19 @@ Assuming IRIS is accessed via **localhost** listening on TCP port **7041**
 
 ##### API based connectivity
 
-Assuming an 'out of the box' YottaDB installation under **/usr/local/lib/yottadb/r130**.
+Assuming an 'out of the box' YottaDB installation under **/usr/local/lib/yottadb/r138**.
 
            var envvars = "";
            envvars = envvars + "ydb_dir=/root/.yottadb\n"
-           envvars = envvars + "ydb_rel=r1.30_x86_64\n"
-           envvars = envvars + "ydb_gbldir=/root/.yottadb/r1.30_x86_64/g/yottadb.gld\n"
-           envvars = envvars + "ydb_routines=/root/.yottadb/r1.30_x86_64/o*(/root/.yottadb/r1.30_x86_64/r /root/.yottadb/r) /usr/local/lib/yottadb/r130/libyottadbutil.so\n"
-           envvars = envvars + "ydb_ci=/usr/local/lib/yottadb/r130/zmgsi.ci\n"
+           envvars = envvars + "ydb_rel=r1.38_x86_64\n"
+           envvars = envvars + "ydb_gbldir=/root/.yottadb/r1.38_x86_64/g/yottadb.gld\n"
+           envvars = envvars + "ydb_routines=/root/.yottadb/r1.38_x86_64/o*(/root/.yottadb/r1.38_x86_64/r /root/.yottadb/r) /usr/local/lib/yottadb/r138/libyottadbutil.so\n"
+           envvars = envvars + "ydb_ci=/usr/local/lib/yottadb/r138/zmgsi.ci\n"
            envvars = envvars + "\n"
 
            var open = db.open({
                type: "YottaDB",
-               path: "/usr/local/lib/yottadb/r130",
+               path: "/usr/local/lib/yottadb/r138",
                env_vars: envvars
              });
 
@@ -544,10 +545,10 @@ This facility provides high-performance techniques for traversing records held i
 
 The first task is to specify the 'query' for the global traverse.
 
-       query = new mcursor(db, {global: <global_name>, key: [<seed_key>]}[, <options>]);
+       query = new mcursor(db, {global: <global_name>, key: [<seed_key>]}[, {<options>}]);
 Or:
 
-       query = db.mglobalquery({global: <global_name>, key: [<seed_key>]}[, <options>]);
+       query = db.mglobalquery({global: <global_name>, key: [<seed_key>]}[, {<options>}]);
 
 The 'options' object can contain the following properties:
 
@@ -582,7 +583,7 @@ Example 1 (return all key values from the 'Person' global - returns a simple var
 
 Example 2 (return all key values and names from the 'Person' global - returns an object):
 
-       query = db.mglobalquery({global: "Person", key: [""]}, multilevel: false, getdata: true);
+       query = db.mglobalquery({global: "Person", key: [""]}, {multilevel: false, getdata: true});
        while ((result = query.next()) !== null) {
           console.log("result: " + JSON.stringify(result, null, '\t'));
        }
@@ -590,14 +591,14 @@ Example 2 (return all key values and names from the 'Person' global - returns an
 
 Example 3 (return all key values and names from the 'Person' global - returns a string):
 
-       query = db.mglobalquery({global: "Person", key: [""]}, multilevel: false, getdata: true, format: "url"});
+       query = db.mglobalquery({global: "Person", key: [""]}, {multilevel: false, getdata: true, format: "url"});
        while ((result = query.next()) !== null) {
           console.log("result: " + result);
        }
 
 Example 4 (return all key values and names from the 'Person' global, including any descendant nodes):
 
-       query = db.mglobalquery({global: "Person", key: [""]}, {{multilevel: true, getdata: true});
+       query = db.mglobalquery({global: "Person", key: [""]}, {multilevel: true, getdata: true});
        while ((result = query.next()) !== null) {
           console.log("result: " + JSON.stringify(result, null, '\t'));
        }
@@ -788,10 +789,10 @@ Example 2 Reset a container to hold an existing instance (object %Id of 2):
 
 The first task is to specify the SQL query.
 
-       query = new mcursor(db, {sql: <sql_statement>[, type: <sql_engine>]);
+       query = new mcursor(db, {sql: <sql_statement>[, type: <sql_engine>]});
 Or:
 
-       query = db.sql({sql: <sql_statement>[, type: <sql_engine>]);
+       query = db.sql({sql: <sql_statement>[, type: <sql_engine>]});
 
 Example 1 (using MGSQL):
 
@@ -1026,7 +1027,7 @@ Logging can be switched off by calling the **setloglevel** function without spec
 
 ## <a name="License"></a> License
 
-Copyright (c) 2018-2023 MGateway Ltd,
+Copyright (c) 2018-2024 MGateway Ltd,
 Surrey UK.                                                      
 All rights reserved.
  
@@ -1228,3 +1229,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 * Correct a fault affecting the return of Unicode data to Node.js through SQL.
 
+### v2.4.29 (21 May 2024)
+
+* Verify that **mg-dbx** will build and work with Node.js v22.x.x.
+* Correct a fault in the InterSystems get and change namespace operations under network connections (db.namespace()).
