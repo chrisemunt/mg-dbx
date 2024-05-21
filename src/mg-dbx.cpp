@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2019-2023 MGateway Ltd                                     |
+   | Copyright (c) 2019-2024 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -176,6 +176,10 @@ Version 2.4.27d 22 June 2023:
 
 Version 2.4.28 7 November 2023:
    Correct a fault affecting the return of Unicode data to Node.js through SQL.
+
+Version 2.4.29 21 May 2024:
+   Verify that mg-dbx will build and work with Node.js v22.x.x. (ABI: 127).
+   Correct a fault in the InterSystems get and change namespace operations under network connections (db.namespace())
 
 */
 
@@ -2958,7 +2962,12 @@ int DBX_DBNAME::ClassReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>&
             if (otype == 1) { /* 2.0.14 */
                fc = obj->InternalFieldCount();
                if (fc == 3) {
+/* v2.4.29 */
+#if DBX_NODE_VERSION >= 220000
+                  mn = obj->GetInternalField(2).As<v8::Value>().As<v8::External>()->Int32Value(icontext).FromJust();
+#else
                   mn = DBX_INT32_VALUE(obj->GetInternalField(2));
+#endif
                   if (mn == DBX_MAGIC_NUMBER_MCLASS) {
                      clx = ObjectWrap::Unwrap<mclass>(obj);
                      pmeth->args[nx].num.oref = (int) clx->oref;
@@ -7289,10 +7298,15 @@ __try {
    }
 
    if (pcon->net_connection) {
+      /* v2.4.29 */
       if (pmeth->argc > 0) {
          rc = netx_tcp_command(pmeth, DBX_CMND_NSSET, 0);
       }
-      netx_tcp_command(pmeth, DBX_CMND_NSGET, 0);
+      else {
+         rc = netx_tcp_command(pmeth, DBX_CMND_NSGET, 0);
+      }
+      strncpy(nspace, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used);
+      nspace[pmeth->output_val.svalue.len_used] = '\0';
    }
    else if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
       if (pmeth->argc > 0) {

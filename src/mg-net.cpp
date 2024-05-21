@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2019-2023 MGateway Ltd                                     |
+   | Copyright (c) 2019-2024 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -752,7 +752,6 @@ int netx_tcp_command(DBXMETH *pmeth, int command, int context)
          pmeth->output_val.svalue.len_alloc = len;
       }
    }
-
    if (len > 0) {
       rc = netx_tcp_read(pcon, (unsigned char *) pmeth->output_val.svalue.buf_addr, len, pcon->timeout, 1);
       if (rc < 0) { /* v2.2.21 */

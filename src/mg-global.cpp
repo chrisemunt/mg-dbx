@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2019-2023 MGateway Ltd                                     |
+   | Copyright (c) 2019-2024 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -119,7 +119,12 @@ void mglobal::New(const FunctionCallbackInfo<Value>& args)
       if (otype) {
          fc = obj->InternalFieldCount();
          if (fc == 3) {
+/* v2.4.29 */
+#if DBX_NODE_VERSION >= 220000
+            mn = obj->GetInternalField(2).As<v8::Value>().As<v8::External>()->Int32Value(icontext).FromJust();
+#else
             mn = DBX_INT32_VALUE(obj->GetInternalField(2));
+#endif
             if (mn == DBX_MAGIC_NUMBER) {
                c = ObjectWrap::Unwrap<DBX_DBNAME>(obj);
             }
@@ -1267,7 +1272,12 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
          ismglobal = 0;
          fc = obj->InternalFieldCount();
          if (fc == 3) {
+/* cmtxxx */
+#if DBX_NODE_VERSION >= 220000
+            mn = obj->GetInternalField(2).As<v8::Value>().As<v8::External>()->Int32Value(icontext).FromJust();
+#else
             mn = DBX_INT32_VALUE(obj->GetInternalField(2));
+#endif
             if (mn == DBX_MAGIC_NUMBER_MGLOBAL) {
                ismglobal = 1;
                mglobal1 ++;

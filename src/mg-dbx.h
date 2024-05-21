@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2019-2023 MGateway Ltd                                     |
+   | Copyright (c) 2019-2024 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "2"
 #define DBX_VERSION_MINOR        "4"
-#define DBX_VERSION_BUILD        "28"
+#define DBX_VERSION_BUILD        "29"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
