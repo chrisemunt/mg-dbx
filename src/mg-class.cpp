@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2019-2024 MGateway Ltd                                     |
+   | Copyright (c) 2019-2025 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -138,7 +138,7 @@ void mclass::New(const FunctionCallbackInfo<Value>& args)
          pmeth->argc = argc;
          if (argc > 1) {
             cname = DBX_TO_STRING(args[1]);
-            dbx_write_char8(isolate, cname, obj->class_name, obj->c->pcon->utf8);
+            dbx_write_char8(isolate, cname, obj->class_name, sizeof(obj->class_name), obj->c->pcon->utf8);
             obj->class_name_len = (int) strlen(obj->class_name);
             if (pcon->utf16) {
                dbx_write_char16(isolate, cname, obj->class_name16);
@@ -742,7 +742,7 @@ void mclass::Reset(const FunctionCallbackInfo<Value>& args)
    }
 
    cname = DBX_TO_STRING(args[0]);
-   dbx_write_char8(isolate, cname, class_name, pcon->utf8);
+   dbx_write_char8(isolate, cname, class_name, sizeof(class_name), pcon->utf8);
    if (class_name[0] == '\0') {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The class:reset method takes at least one argument (the class name)", 1)));
       dbx_request_memory_free(pcon, pmeth, 0);

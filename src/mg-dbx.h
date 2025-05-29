@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2019-2024 MGateway Ltd                                     |
+   | Copyright (c) 2019-2025 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "2"
 #define DBX_VERSION_MINOR        "4"
-#define DBX_VERSION_BUILD        "29"
+#define DBX_VERSION_BUILD        "30"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -437,7 +437,8 @@ DISABLE_WCAST_FUNCTION_TYPE
 
 #endif
 
-#if DBX_NODE_VERSION >= 120000
+/* v2.4.30 */
+#if DBX_NODE_VERSION >= 240000
 #define DBX_GET(a,b)                a->Get(icontext,b).ToLocalChecked()
 #define DBX_SET(a,b,c)              a->Set(icontext,b,c).FromJust()
 #define DBX_TO_OBJECT(a)            a->ToObject(icontext).ToLocalChecked()
@@ -445,7 +446,20 @@ DISABLE_WCAST_FUNCTION_TYPE
 #define DBX_TO_BOOLEAN(a)           a->ToBoolean(isolate)
 #define DBX_NUMBER_VALUE(a)         a->NumberValue(icontext).ToChecked()
 #define DBX_INT32_VALUE(a)          a->Int32Value(icontext).FromJust()
-#define DBX_WRITE_UTF8(a,b)         a->WriteUtf8(isolate, b)
+#define DBX_WRITE_UTF8(a,b,c)       a->WriteUtf8V2(isolate, b, c, v8::String::WriteFlags::kNullTerminate)
+#define DBX_WRITE(a,b)              a->WriteV2(isolate, 0, a->Length(), (uint16_t *) b, v8::String::WriteFlags::kNullTerminate)
+#define DBX_WRITE_ONE_BYTE(a,b)     a->WriteOneByteV2(isolate, 0, a->Length(), b, v8::String::WriteFlags::kNullTerminate)
+#define DBX_UTF8_LENGTH(a)          (int) a->Utf8LengthV2(isolate)
+#define DBX_LENGTH(a)               a->Length()
+#elif DBX_NODE_VERSION >= 120000
+#define DBX_GET(a,b)                a->Get(icontext,b).ToLocalChecked()
+#define DBX_SET(a,b,c)              a->Set(icontext,b,c).FromJust()
+#define DBX_TO_OBJECT(a)            a->ToObject(icontext).ToLocalChecked()
+#define DBX_TO_STRING(a)            a->ToString(icontext).ToLocalChecked()
+#define DBX_TO_BOOLEAN(a)           a->ToBoolean(isolate)
+#define DBX_NUMBER_VALUE(a)         a->NumberValue(icontext).ToChecked()
+#define DBX_INT32_VALUE(a)          a->Int32Value(icontext).FromJust()
+#define DBX_WRITE_UTF8(a,b,c)       a->WriteUtf8(isolate, b)
 #define DBX_WRITE(a,b)              a->Write(isolate, (uint16_t *) b)
 #define DBX_WRITE_ONE_BYTE(a,b)     a->WriteOneByte(isolate, b)
 #define DBX_UTF8_LENGTH(a)          a->Utf8Length(isolate)
@@ -458,7 +472,7 @@ DISABLE_WCAST_FUNCTION_TYPE
 #define DBX_TO_BOOLEAN(a)           a->ToBoolean(icontext).ToLocalChecked()
 #define DBX_NUMBER_VALUE(a)         a->NumberValue(icontext).ToChecked()
 #define DBX_INT32_VALUE(a)          a->Int32Value(icontext).FromJust()
-#define DBX_WRITE_UTF8(a,b)         a->WriteUtf8(b)
+#define DBX_WRITE_UTF8(a,b,c)       a->WriteUtf8(b)
 #define DBX_WRITE(a,b)              a->Write((uint16_t *) b)
 #define DBX_WRITE_ONE_BYTE(a,b)     a->WriteOneByte(b)
 #define DBX_UTF8_LENGTH(a)          a->Utf8Length()
@@ -471,7 +485,7 @@ DISABLE_WCAST_FUNCTION_TYPE
 #define DBX_TO_BOOLEAN(a)           a->ToBoolean()
 #define DBX_NUMBER_VALUE(a)         a->NumberValue()
 #define DBX_INT32_VALUE(a)          a->Int32Value()
-#define DBX_WRITE_UTF8(a,b)         a->WriteUtf8(b)
+#define DBX_WRITE_UTF8(a,b,c)       a->WriteUtf8(b)
 #define DBX_WRITE(a,b)              a->Write((uint16_t *) b)
 #define DBX_WRITE_ONE_BYTE(a,b)     a->WriteOneByte(b)
 #define DBX_UTF8_LENGTH(a)          a->Utf8Length()
@@ -900,8 +914,13 @@ typedef struct tagDBXISCSO {
    int               (* p_CachePushProperty)             (unsigned int oref, int plen, const Callin_char_t * pptr);
    int               (* p_CachePushPropertyW)            (unsigned int oref, int plen, const unsigned short * pptr);
    int               (* p_CacheType)                     (void);
+#if DBX_NODE_VERSION >= 240000
+   int               (* p_CacheEvalA)                    (CACHE_ASTRP expr);
+   int               (* p_CacheExecuteA)                 (CACHE_ASTRP cmd);
+#else
    int               (* p_CacheEvalA)                    (CACHE_ASTRP volatile expr);
    int               (* p_CacheExecuteA)                 (CACHE_ASTRP volatile cmd);
+#endif
    int               (* p_CacheConvert)                  (unsigned long type, void * rbuf);
    int               (* p_CacheErrorA)                   (CACHE_ASTRP, CACHE_ASTRP, int *);
    int               (* p_CacheErrxlateA)                (int, CACHE_ASTRP);
@@ -1186,7 +1205,7 @@ v8::Local<v8::String>      dbx_new_string8               (v8::Isolate * isolate,
 v8::Local<v8::String>      dbx_new_string16              (v8::Isolate * isolate, unsigned short * buffer);
 v8::Local<v8::String>      dbx_new_string8n              (v8::Isolate * isolate, char * buffer, unsigned long len, int utf8);
 v8::Local<v8::String>      dbx_new_string16n             (v8::Isolate * isolate, unsigned short * buffer, unsigned long len);
-int                        dbx_write_char8               (v8::Isolate * isolate, v8::Local<v8::String> str, char * buffer, int utf8);
+int                        dbx_write_char8               (v8::Isolate * isolate, v8::Local<v8::String> str, char * buffer, int buffer_size, int utf8);
 int                        dbx_write_char16              (v8::Isolate * isolate, v8::Local<v8::String> str, unsigned short * buffer);
 
 int                        dbx_ibuffer_add               (DBXMETH *pmeth, v8::Isolate * isolate, int argn, v8::Local<v8::String> str, void * pbuffer, int buffer_len, short char16, short context);

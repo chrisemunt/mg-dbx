@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2019-2024 MGateway Ltd                                     |
+   | Copyright (c) 2019-2025 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -72,23 +72,23 @@ int netx_load_winsock(DBXCON *pcon, int context)
       }
    }
 
-   netx_so.p_WSASocket             = (MG_LPFN_WSASOCKET)              dbx_dso_sym(netx_so.plibrary, "WSASocketA");
-   netx_so.p_WSAGetLastError       = (MG_LPFN_WSAGETLASTERROR)        dbx_dso_sym(netx_so.plibrary, "WSAGetLastError");
-   netx_so.p_WSAStartup            = (MG_LPFN_WSASTARTUP)             dbx_dso_sym(netx_so.plibrary, "WSAStartup");
-   netx_so.p_WSACleanup            = (MG_LPFN_WSACLEANUP)             dbx_dso_sym(netx_so.plibrary, "WSACleanup");
-   netx_so.p_WSAFDIsSet            = (MG_LPFN_WSAFDISSET)             dbx_dso_sym(netx_so.plibrary, "__WSAFDIsSet");
-   netx_so.p_WSARecv               = (MG_LPFN_WSARECV)                dbx_dso_sym(netx_so.plibrary, "WSARecv");
-   netx_so.p_WSASend               = (MG_LPFN_WSASEND)                dbx_dso_sym(netx_so.plibrary, "WSASend");
+   netx_so.p_WSASocket             = (MG_LPFN_WSASOCKET)              dbx_dso_sym(netx_so.plibrary, (char *) "WSASocketA");
+   netx_so.p_WSAGetLastError       = (MG_LPFN_WSAGETLASTERROR)        dbx_dso_sym(netx_so.plibrary, (char *) "WSAGetLastError");
+   netx_so.p_WSAStartup            = (MG_LPFN_WSASTARTUP)             dbx_dso_sym(netx_so.plibrary, (char *) "WSAStartup");
+   netx_so.p_WSACleanup            = (MG_LPFN_WSACLEANUP)             dbx_dso_sym(netx_so.plibrary, (char *) "WSACleanup");
+   netx_so.p_WSAFDIsSet            = (MG_LPFN_WSAFDISSET)             dbx_dso_sym(netx_so.plibrary, (char *) "__WSAFDIsSet");
+   netx_so.p_WSARecv               = (MG_LPFN_WSARECV)                dbx_dso_sym(netx_so.plibrary, (char *) "WSARecv");
+   netx_so.p_WSASend               = (MG_LPFN_WSASEND)                dbx_dso_sym(netx_so.plibrary, (char *) "WSASend");
 
 #if defined(NETX_IPV6)
-   netx_so.p_WSAStringToAddress    = (MG_LPFN_WSASTRINGTOADDRESS)     dbx_dso_sym(netx_so.plibrary, "WSAStringToAddressA");
-   netx_so.p_WSAAddressToString    = (MG_LPFN_WSAADDRESSTOSTRING)     dbx_dso_sym(netx_so.plibrary, "WSAAddressToStringA");
-   netx_so.p_getaddrinfo           = (MG_LPFN_GETADDRINFO)            dbx_dso_sym(netx_so.plibrary, "getaddrinfo");
-   netx_so.p_freeaddrinfo          = (MG_LPFN_FREEADDRINFO)           dbx_dso_sym(netx_so.plibrary, "freeaddrinfo");
-   netx_so.p_getnameinfo           = (MG_LPFN_GETNAMEINFO)            dbx_dso_sym(netx_so.plibrary, "getnameinfo");
-   netx_so.p_getpeername           = (MG_LPFN_GETPEERNAME)            dbx_dso_sym(netx_so.plibrary, "getpeername");
-   netx_so.p_inet_ntop             = (MG_LPFN_INET_NTOP)              dbx_dso_sym(netx_so.plibrary, "InetNtop");
-   netx_so.p_inet_pton             = (MG_LPFN_INET_PTON)              dbx_dso_sym(netx_so.plibrary, "InetPton");
+   netx_so.p_WSAStringToAddress    = (MG_LPFN_WSASTRINGTOADDRESS)     dbx_dso_sym(netx_so.plibrary, (char *) "WSAStringToAddressA");
+   netx_so.p_WSAAddressToString    = (MG_LPFN_WSAADDRESSTOSTRING)     dbx_dso_sym(netx_so.plibrary, (char *) "WSAAddressToStringA");
+   netx_so.p_getaddrinfo           = (MG_LPFN_GETADDRINFO)            dbx_dso_sym(netx_so.plibrary, (char *) "getaddrinfo");
+   netx_so.p_freeaddrinfo          = (MG_LPFN_FREEADDRINFO)           dbx_dso_sym(netx_so.plibrary, (char *) "freeaddrinfo");
+   netx_so.p_getnameinfo           = (MG_LPFN_GETNAMEINFO)            dbx_dso_sym(netx_so.plibrary, (char *) "getnameinfo");
+   netx_so.p_getpeername           = (MG_LPFN_GETPEERNAME)            dbx_dso_sym(netx_so.plibrary, (char *) "getpeername");
+   netx_so.p_inet_ntop             = (MG_LPFN_INET_NTOP)              dbx_dso_sym(netx_so.plibrary, (char *) "InetNtop");
+   netx_so.p_inet_pton             = (MG_LPFN_INET_PTON)              dbx_dso_sym(netx_so.plibrary, (char *) "InetPton");
 #else
    netx_so.p_WSAStringToAddress    = NULL;
    netx_so.p_WSAAddressToString    = NULL;
@@ -100,31 +100,31 @@ int netx_load_winsock(DBXCON *pcon, int context)
    netx_so.p_inet_pton             = NULL;
 #endif
 
-   netx_so.p_closesocket           = (MG_LPFN_CLOSESOCKET)            dbx_dso_sym(netx_so.plibrary, "closesocket");
-   netx_so.p_gethostname           = (MG_LPFN_GETHOSTNAME)            dbx_dso_sym(netx_so.plibrary, "gethostname");
-   netx_so.p_gethostbyname         = (MG_LPFN_GETHOSTBYNAME)          dbx_dso_sym(netx_so.plibrary, "gethostbyname");
-   netx_so.p_getservbyname         = (MG_LPFN_GETSERVBYNAME)          dbx_dso_sym(netx_so.plibrary, "getservbyname");
-   netx_so.p_gethostbyaddr         = (MG_LPFN_GETHOSTBYADDR)          dbx_dso_sym(netx_so.plibrary, "gethostbyaddr");
-   netx_so.p_htons                 = (MG_LPFN_HTONS)                  dbx_dso_sym(netx_so.plibrary, "htons");
-   netx_so.p_htonl                 = (MG_LPFN_HTONL)                  dbx_dso_sym(netx_so.plibrary, "htonl");
-   netx_so.p_ntohl                 = (MG_LPFN_NTOHL)                  dbx_dso_sym(netx_so.plibrary, "ntohl");
-   netx_so.p_ntohs                 = (MG_LPFN_NTOHS)                  dbx_dso_sym(netx_so.plibrary, "ntohs");
-   netx_so.p_connect               = (MG_LPFN_CONNECT)                dbx_dso_sym(netx_so.plibrary, "connect");
-   netx_so.p_inet_addr             = (MG_LPFN_INET_ADDR)              dbx_dso_sym(netx_so.plibrary, "inet_addr");
-   netx_so.p_inet_ntoa             = (MG_LPFN_INET_NTOA)              dbx_dso_sym(netx_so.plibrary, "inet_ntoa");
+   netx_so.p_closesocket           = (MG_LPFN_CLOSESOCKET)            dbx_dso_sym(netx_so.plibrary, (char *) "closesocket");
+   netx_so.p_gethostname           = (MG_LPFN_GETHOSTNAME)            dbx_dso_sym(netx_so.plibrary, (char *) "gethostname");
+   netx_so.p_gethostbyname         = (MG_LPFN_GETHOSTBYNAME)          dbx_dso_sym(netx_so.plibrary, (char *) "gethostbyname");
+   netx_so.p_getservbyname         = (MG_LPFN_GETSERVBYNAME)          dbx_dso_sym(netx_so.plibrary, (char *) "getservbyname");
+   netx_so.p_gethostbyaddr         = (MG_LPFN_GETHOSTBYADDR)          dbx_dso_sym(netx_so.plibrary, (char *) "gethostbyaddr");
+   netx_so.p_htons                 = (MG_LPFN_HTONS)                  dbx_dso_sym(netx_so.plibrary, (char *) "htons");
+   netx_so.p_htonl                 = (MG_LPFN_HTONL)                  dbx_dso_sym(netx_so.plibrary, (char *) "htonl");
+   netx_so.p_ntohl                 = (MG_LPFN_NTOHL)                  dbx_dso_sym(netx_so.plibrary, (char *) "ntohl");
+   netx_so.p_ntohs                 = (MG_LPFN_NTOHS)                  dbx_dso_sym(netx_so.plibrary, (char *) "ntohs");
+   netx_so.p_connect               = (MG_LPFN_CONNECT)                dbx_dso_sym(netx_so.plibrary, (char *) "connect");
+   netx_so.p_inet_addr             = (MG_LPFN_INET_ADDR)              dbx_dso_sym(netx_so.plibrary, (char *) "inet_addr");
+   netx_so.p_inet_ntoa             = (MG_LPFN_INET_NTOA)              dbx_dso_sym(netx_so.plibrary, (char *) "inet_ntoa");
 
-   netx_so.p_socket                = (MG_LPFN_SOCKET)                 dbx_dso_sym(netx_so.plibrary, "socket");
-   netx_so.p_setsockopt            = (MG_LPFN_SETSOCKOPT)             dbx_dso_sym(netx_so.plibrary, "setsockopt");
-   netx_so.p_getsockopt            = (MG_LPFN_GETSOCKOPT)             dbx_dso_sym(netx_so.plibrary, "getsockopt");
-   netx_so.p_getsockname           = (MG_LPFN_GETSOCKNAME)            dbx_dso_sym(netx_so.plibrary, "getsockname");
+   netx_so.p_socket                = (MG_LPFN_SOCKET)                 dbx_dso_sym(netx_so.plibrary, (char *) "socket");
+   netx_so.p_setsockopt            = (MG_LPFN_SETSOCKOPT)             dbx_dso_sym(netx_so.plibrary, (char *) "setsockopt");
+   netx_so.p_getsockopt            = (MG_LPFN_GETSOCKOPT)             dbx_dso_sym(netx_so.plibrary, (char *) "getsockopt");
+   netx_so.p_getsockname           = (MG_LPFN_GETSOCKNAME)            dbx_dso_sym(netx_so.plibrary, (char *) "getsockname");
 
-   netx_so.p_select                = (MG_LPFN_SELECT)                 dbx_dso_sym(netx_so.plibrary, "select");
-   netx_so.p_recv                  = (MG_LPFN_RECV)                   dbx_dso_sym(netx_so.plibrary, "recv");
-   netx_so.p_send                  = (MG_LPFN_SEND)                   dbx_dso_sym(netx_so.plibrary, "send");
-   netx_so.p_shutdown              = (MG_LPFN_SHUTDOWN)               dbx_dso_sym(netx_so.plibrary, "shutdown");
-   netx_so.p_bind                  = (MG_LPFN_BIND)                   dbx_dso_sym(netx_so.plibrary, "bind");
-   netx_so.p_listen                = (MG_LPFN_LISTEN)                 dbx_dso_sym(netx_so.plibrary, "listen");
-   netx_so.p_accept                = (MG_LPFN_ACCEPT)                 dbx_dso_sym(netx_so.plibrary, "accept");
+   netx_so.p_select                = (MG_LPFN_SELECT)                 dbx_dso_sym(netx_so.plibrary, (char *) "select");
+   netx_so.p_recv                  = (MG_LPFN_RECV)                   dbx_dso_sym(netx_so.plibrary, (char *) "recv");
+   netx_so.p_send                  = (MG_LPFN_SEND)                   dbx_dso_sym(netx_so.plibrary, (char *) "send");
+   netx_so.p_shutdown              = (MG_LPFN_SHUTDOWN)               dbx_dso_sym(netx_so.plibrary, (char *) "shutdown");
+   netx_so.p_bind                  = (MG_LPFN_BIND)                   dbx_dso_sym(netx_so.plibrary, (char *) "bind");
+   netx_so.p_listen                = (MG_LPFN_LISTEN)                 dbx_dso_sym(netx_so.plibrary, (char *) "listen");
+   netx_so.p_accept                = (MG_LPFN_ACCEPT)                 dbx_dso_sym(netx_so.plibrary, (char *) "accept");
 
    if (   (netx_so.p_WSASocket              == NULL && netx_so.winsock == 2)
        ||  netx_so.p_WSAGetLastError        == NULL

@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2019-2024 MGateway Ltd                                     |
+   | Copyright (c) 2019-2025 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -180,6 +180,9 @@ Version 2.4.28 7 November 2023:
 Version 2.4.29 21 May 2024:
    Verify that mg-dbx will build and work with Node.js v22.x.x. (ABI: 127).
    Correct a fault in the InterSystems get and change namespace operations under network connections (db.namespace())
+
+Version 2.4.30 29 May 2025:
+   Verify that mg-dbx will build and work with Node.js v24.x.x. (ABI: 137).
 
 */
 
@@ -709,14 +712,14 @@ void DBX_DBNAME::SetLogLevel(const FunctionCallbackInfo<Value>& args)
 
    if (js_narg > 0) {
       str = DBX_TO_STRING(args[0]);
-      DBX_WRITE_UTF8(str, buffer);
+      DBX_WRITE_UTF8(str, buffer, sizeof(buffer));
       if (buffer[0]) {
          strcpy(pcon->log_file, buffer);
       }
    }
    if (js_narg > 1) {
       str = DBX_TO_STRING(args[1]);
-      DBX_WRITE_UTF8(str, buffer);
+      DBX_WRITE_UTF8(str, buffer, sizeof(buffer));
       dbx_lcase(buffer);
       if (strstr(buffer, "e")) {
          pcon->log_errors = 1;
@@ -735,7 +738,7 @@ void DBX_DBNAME::SetLogLevel(const FunctionCallbackInfo<Value>& args)
    }
    if (js_narg > 2) {
       str = DBX_TO_STRING(args[2]);
-      DBX_WRITE_UTF8(str, buffer);
+      DBX_WRITE_UTF8(str, buffer, sizeof(buffer));
       if (buffer[0]) {
          strcpy(pcon->log_filter, ",");
          strcpy(pcon->log_filter + 1, buffer);
@@ -827,7 +830,7 @@ void DBX_DBNAME::LogMessage(const FunctionCallbackInfo<Value>& args)
 
       message = (char *) dbx_malloc(str_len + 32, 0);
       if (message) {
-         DBX_WRITE_UTF8(str, message);
+         DBX_WRITE_UTF8(str, message, str_len);
       }
    }
 
@@ -837,7 +840,7 @@ void DBX_DBNAME::LogMessage(const FunctionCallbackInfo<Value>& args)
 
       title = (char *) dbx_malloc(str_len + 32, 0);
       if (title) {
-         DBX_WRITE_UTF8(str, title);
+         DBX_WRITE_UTF8(str, title, str_len);
       }
    }
 
@@ -899,7 +902,7 @@ void DBX_DBNAME::Charset(const FunctionCallbackInfo<Value>& args)
       return;
    }
 
-   DBX_WRITE_UTF8(str, buffer);
+   DBX_WRITE_UTF8(str, buffer, sizeof(buffer));
    dbx_lcase(buffer);
 
    if (strstr(buffer, "ansi") || strstr(buffer, "ascii") || strstr(buffer, "8859") || strstr(buffer, "1252")) {
@@ -980,13 +983,25 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
          error_code = 1;
          break;
       }
-      DBX_WRITE_UTF8(key, (char *) name);
+      DBX_WRITE_UTF8(key, (char *) name, sizeof(name));
 
+      /* v2.4.30 */
+/*
+      {
+         char buffer[256];
+         uint16_t buffer16[256];
+
+         key->WriteOneByteV2(isolate, 0, key->Length(), (uint8_t *) buffer, v8::String::WriteFlags::kNullTerminate);
+         DBX_WRITE_ONE_BYTE(key, (uint8_t *) buffer);
+         key->WriteUtf8V2(isolate, buffer, 999, v8::String::WriteFlags::kNullTerminate);
+         key->WriteV2(isolate, 0, key->Length(), &buffer16[0], v8::String::WriteFlags::kNullTerminate);
+         printf("length=%d; key=%s;\r\n", key_len, buffer);
+      }
+*/
       if (!strcmp(name, (char *) "type")) {
          value = DBX_TO_STRING(DBX_GET(obj ,key));
-         DBX_WRITE_UTF8(value, pcon->type);
+         DBX_WRITE_UTF8(value, pcon->type, sizeof(pcon->type));
          dbx_lcase(pcon->type);
-
          if (!strcmp(pcon->type, "cache"))
             pcon->dbtype = DBX_DBTYPE_CACHE;
          else if (!strcmp(pcon->type, "iris"))
@@ -996,11 +1011,11 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
       }
       else if (!strcmp(name, (char *) "path")) {
          value = DBX_TO_STRING(DBX_GET(obj, key));
-         DBX_WRITE_UTF8(value, pcon->path);
+         DBX_WRITE_UTF8(value, pcon->path, sizeof(pcon->path));
       }
       else if (!strcmp(name, (char *) "host")) {
          value = DBX_TO_STRING(DBX_GET(obj, key));
-         DBX_WRITE_UTF8(value, pcon->net_host);
+         DBX_WRITE_UTF8(value, pcon->net_host, sizeof(pcon->net_host));
       }
       else if (!strcmp(name, (char *) "tcp_port")) {
          pcon->tcp_port = DBX_INT32_VALUE(DBX_GET(obj, key));
@@ -1010,28 +1025,28 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
       }
       else if (!strcmp(name, (char *) "username")) {
          value = DBX_TO_STRING(DBX_GET(obj, key));
-         DBX_WRITE_UTF8(value, pcon->username);
+         DBX_WRITE_UTF8(value, pcon->username, sizeof(pcon->username));
       }
       else if (!strcmp(name, (char *) "password")) {
          value = DBX_TO_STRING(DBX_GET(obj, key));
-         DBX_WRITE_UTF8(value, pcon->password);
+         DBX_WRITE_UTF8(value, pcon->password, sizeof(pcon->password));
       }
       else if (!strcmp(name, (char *) "namespace")) {
          value = DBX_TO_STRING(DBX_GET(obj, key));
-       DBX_WRITE_UTF8(value, pcon->nspace);
+       DBX_WRITE_UTF8(value, pcon->nspace, sizeof(pcon->nspace));
       }
       else if (!strcmp(name, (char *) "input_device")) {
          value = DBX_TO_STRING(DBX_GET(obj, key));
-         DBX_WRITE_UTF8(value, pcon->input_device);
+         DBX_WRITE_UTF8(value, pcon->input_device, sizeof(pcon->input_device));
       }
       else if (!strcmp(name, (char *) "output_device")) {
          value = DBX_TO_STRING(DBX_GET(obj, key));
-         DBX_WRITE_UTF8(value, pcon->output_device);
+         DBX_WRITE_UTF8(value, pcon->output_device, sizeof(pcon->output_device));
       }
       else if (!strcmp(name, (char *) "env_vars")) {
          char *p, *p1, *p2;
          value = DBX_TO_STRING(DBX_GET(obj, key));
-         DBX_WRITE_UTF8(value, (char *) pmeth->ibuffer);
+         DBX_WRITE_UTF8(value, (char *) pmeth->ibuffer, pmeth->ibuffer_size);
 
          p = (char *) pmeth->ibuffer;
          p2 = p;
@@ -1362,7 +1377,7 @@ int DBX_DBNAME::LogFunction(DBX_DBNAME *c, const FunctionCallbackInfo<Value>& ar
          strcpy(buffer + max, ", ");
          max += 2;
       }
-      dbx_write_char8(isolate, str[n], buffer + max, 1);
+      dbx_write_char8(isolate, str[n], buffer + max, 128, 1);
       max += len[n];
    }
    strcpy(buffer + max, ")");
@@ -3044,7 +3059,7 @@ void DBX_DBNAME::ClassMethodEx(const FunctionCallbackInfo<Value>& args, int bina
    }
 
    cname = DBX_TO_STRING(args[0]);
-   dbx_write_char8(isolate, cname, class_name, pcon->utf8);
+   dbx_write_char8(isolate, cname, class_name, sizeof(class_name), pcon->utf8);
    if (class_name[0] == '\0') {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The classmethod method takes at least one argument (the class name)", 1)));
       return;
@@ -3503,7 +3518,7 @@ void DBX_DBNAME::Benchmark(const FunctionCallbackInfo<Value>& args)
    DBX_GET_ICONTEXT;
    c->dbx_count ++;
 
-   dbx_write_char8(isolate, DBX_TO_STRING(args[0]), ibuffer, 1);
+   dbx_write_char8(isolate, DBX_TO_STRING(args[0]), ibuffer, sizeof(ibuffer), 1);
 
    strcpy(obuffer, "output string");
    result = dbx_new_string8(isolate, obuffer, 1);
@@ -3918,21 +3933,31 @@ v8::Local<v8::String> dbx_new_string16n(v8::Isolate * isolate, unsigned short * 
 #endif
 }
 
-
-int dbx_write_char8(v8::Isolate * isolate, v8::Local<v8::String> str, char * buffer, int utf8)
+/* v2.4.30 */
+int dbx_write_char8(v8::Isolate * isolate, v8::Local<v8::String> str, char * buffer, int buffer_size, int utf8)
 {
    if (utf8) {
-      return DBX_WRITE_UTF8(str, buffer);
+      return DBX_WRITE_UTF8(str, buffer, buffer_size);
    }
    else {
+#if DBX_NODE_VERSION >= 240000
+      DBX_WRITE_ONE_BYTE(str, (uint8_t *) buffer);
+      return 0;
+#else
       return DBX_WRITE_ONE_BYTE(str, (uint8_t *) buffer);
+#endif
    }
 }
 
 
 int dbx_write_char16(v8::Isolate * isolate, v8::Local<v8::String> str, unsigned short * buffer)
 {
+#if DBX_NODE_VERSION >= 240000
+   DBX_WRITE(str, buffer);
+   return 0;
+#else
    return DBX_WRITE(str, buffer);
+#endif
 }
 
 
@@ -4011,7 +4036,7 @@ __try {
       }
    }
    else {
-      dbx_write_char8(isolate, str, (char *) p, pcon->utf8);
+      dbx_write_char8(isolate, str, (char *) p, pmeth->ibuffer_size - pmeth->ibuffer_used, pcon->utf8);
    }
    pmeth->ibuffer_used += len;
    type = pmeth->args[argn].type; /* v2.0.14 */
@@ -4061,7 +4086,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_ibuffer_add: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -4175,7 +4200,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_ibuffer16_add: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -4209,7 +4234,7 @@ __try {
    str = DBX_TO_STRING(args[argc_offset]);
    global_name16_len = 0;
    global_name_len = dbx_string8_length(isolate, str, pcon->utf8);
-   dbx_write_char8(isolate, str, global_name, pcon->utf8);
+   dbx_write_char8(isolate, str, global_name, 256, pcon->utf8);
    if (global_name_len == 0) {
       return -1;
    }
@@ -4308,7 +4333,7 @@ __try {
                pval->cvalue.buf16_addr = NULL;
                pval->type = DBX_DTYPE_STR;
                pval->svalue.buf_addr = ((char *) pval) + sizeof(DBXVAL);
-               dbx_write_char8(isolate, str, pval->svalue.buf_addr, 1);
+               dbx_write_char8(isolate, str, pval->svalue.buf_addr, pval->svalue.len_alloc, 1);
                pval->svalue.len_alloc = len + 32;
                pval->svalue.len_used = len;
             }
@@ -4336,7 +4361,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_global_reset: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -4406,13 +4431,13 @@ __try {
       psql->no_cols = 0;
       psql->sql_script = ((char *) psql) + sizeof(DBXSQL);
       psql->sql_script_len = len;
-      dbx_write_char8(isolate, value, psql->sql_script, pcon->utf8);
+      dbx_write_char8(isolate, value, psql->sql_script, psql->sql_script_len, pcon->utf8);
 
       psql->sql_type = DBX_SQL_MGSQL;
       key = dbx_new_string8(isolate, (char *) "type", 1);
       if (DBX_GET(obj, key)->IsString()) {
          value = DBX_TO_STRING(DBX_GET(obj, key));
-         dbx_write_char8(isolate, value, buffer, pcon->utf8);
+         dbx_write_char8(isolate, value, buffer, sizeof(buffer), pcon->utf8);
          dbx_lcase(buffer);
          if (strstr(buffer, "intersys") || strstr(buffer, "cach") || strstr(buffer, "iris")) {
             psql->sql_type = DBX_SQL_ISCSQL;
@@ -4438,7 +4463,7 @@ __try {
             if (DBX_GET(obj, key)->IsString()) {
                char buffer[64];
                value = DBX_TO_STRING(DBX_GET(obj, key));
-               dbx_write_char8(isolate, value, buffer, 1);
+               dbx_write_char8(isolate, value, buffer, sizeof(buffer), 1);
                dbx_lcase(buffer);
                if (!strcmp(buffer, "url")) {
                   cx->format = 1;
@@ -4467,7 +4492,7 @@ __try {
    if (DBX_GET(obj, key)->IsString()) {
       value = DBX_TO_STRING(DBX_GET(obj, key));
       global_name_len = dbx_string8_length(isolate, value, pcon->utf8);
-      dbx_write_char8(isolate, value, global_name, pcon->utf8);
+      dbx_write_char8(isolate, value, global_name, 256, pcon->utf8);
       if (pcon->utf16) {
          global_name16_len = dbx_string16_length(isolate, value);
          dbx_write_char16(isolate, value, global_name16);
@@ -4524,7 +4549,7 @@ __try {
       for (n = 0; n < cx->pqr_prev->keyn; n ++) {
          value = DBX_TO_STRING(DBX_GET(a, n));
          len = (int) dbx_string8_length(isolate, value, 0);
-         dbx_write_char8(isolate, value, cx->pqr_prev->ykeys[n].buf_addr, 1);
+         dbx_write_char8(isolate, value, cx->pqr_prev->ykeys[n].buf_addr, cx->pqr_prev->ykeys[n].len_alloc, 1);
          cx->pqr_prev->ykeys[n].len_used = len;
       }
    }
@@ -4560,7 +4585,7 @@ __try {
          }
          else {
             len = (int) dbx_string8_length(isolate, value, 0);
-            dbx_write_char8(isolate, value, cx->pqr_prev->ykeys[n].buf_addr, 1);
+            dbx_write_char8(isolate, value, cx->pqr_prev->ykeys[n].buf_addr, cx->pqr_prev->ykeys[n].len_alloc, 1);
             cx->pqr_prev->ykeys[n].len_used = len;
             cx->pqr_prev->keys[n].svalue.len_used = len;
             cx->pqr_prev->keys[n].type = DBX_DTYPE_STR8;
@@ -4598,7 +4623,7 @@ __try {
       if (DBX_GET(obj, key)->IsString()) {
          char buffer[64];
          value = DBX_TO_STRING(DBX_GET(obj, key));
-         dbx_write_char8(isolate, value, buffer, 1);
+         dbx_write_char8(isolate, value, buffer, sizeof(buffer), 1);
          dbx_lcase(buffer);
          if (!strcmp(buffer, "url")) {
             cx->format = 1;
@@ -4622,7 +4647,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_cursor_reset: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -5129,10 +5154,17 @@ __try {
    sprintf(fun, "%sType", pcon->p_isc_so->funprfx);
    pcon->p_isc_so->p_CacheType = (int (*) (void)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
 
+#if DBX_NODE_VERSION >= 240000
+   sprintf(fun, "%sEvalA", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheEvalA = (int (*) (CACHE_ASTRP)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+   sprintf(fun, "%sExecuteA", pcon->p_isc_so->funprfx);
+   pcon->p_isc_so->p_CacheExecuteA = (int (*) (CACHE_ASTRP)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+#else
    sprintf(fun, "%sEvalA", pcon->p_isc_so->funprfx);
    pcon->p_isc_so->p_CacheEvalA = (int (*) (CACHE_ASTRP volatile)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
    sprintf(fun, "%sExecuteA", pcon->p_isc_so->funprfx);
    pcon->p_isc_so->p_CacheExecuteA = (int (*) (CACHE_ASTRP volatile)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
+#endif
    sprintf(fun, "%sConvert", pcon->p_isc_so->funprfx);
    pcon->p_isc_so->p_CacheConvert = (int (*) (unsigned long, void *)) dbx_dso_sym(pcon->p_isc_so->p_library, (char *) fun);
 
@@ -5189,7 +5221,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:isc_load_library: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -5381,7 +5413,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:isc_authenticate: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -5468,7 +5500,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:isc_open: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -5580,7 +5612,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:isc_authenticate: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -5627,7 +5659,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:isc_change_namespace: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -5670,7 +5702,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:isc_cleanup: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -5842,7 +5874,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:isc_pop_value: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -5966,7 +5998,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:isc_callin_message: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -6059,7 +6091,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:isc_error_message: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -6175,7 +6207,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:isc_error: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -7037,7 +7069,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_version: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -7148,7 +7180,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_open: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -7266,7 +7298,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_close: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -7343,7 +7375,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_namespace: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -7444,7 +7476,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_reference: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -7517,7 +7549,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_global_reference: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -7586,7 +7618,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_get: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -7653,7 +7685,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_set: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -7723,7 +7755,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_defined: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -7794,7 +7826,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_delete: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -7859,7 +7891,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_next: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -7924,7 +7956,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_previous: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -7991,7 +8023,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_increment: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -8088,7 +8120,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_lock: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -8165,7 +8197,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_unlock: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -8387,7 +8419,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_merge: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -8451,7 +8483,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_tstart: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -8520,7 +8552,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_tlevel: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -8590,7 +8622,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_tcommit: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -8660,7 +8692,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_trollback: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -8741,7 +8773,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_function_reference: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -8807,7 +8839,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_function: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -8870,7 +8902,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_class_reference: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -8932,7 +8964,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_classmethod: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -8994,7 +9026,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_method: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -9057,7 +9089,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_setproperty: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -9119,7 +9151,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_getproperty: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -9335,7 +9367,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_sql_execute: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -9536,7 +9568,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_sql_row: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -9687,7 +9719,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_sql_cleanup: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -9924,7 +9956,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_global_directory: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -10087,7 +10119,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_global_order: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -10290,7 +10322,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_global_query: %x", code);
-      dbx_log_event(pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -10411,7 +10443,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_parse_global_reference: %x", code);
-      dbx_log_event(pmeth->pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pmeth->pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -10566,7 +10598,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
    __try {
       code = GetExceptionCode();
       sprintf_s(bufferx, 255, "Exception caught in f:dbx_parse_global_reference16: %x", code);
-      dbx_log_event(pmeth->pcon, bufferx, "Error Condition", 0);
+      dbx_log_event(pmeth->pcon, bufferx, (char *) "Error Condition", 0);
    }
    __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
@@ -11322,13 +11354,15 @@ __try {
       n = fcntl(fileno(fp), F_SETLKW, &lock);
 
       fputs(p_buffer, fp);
-      fclose(fp);
+      /* fclose(fp); */
 
       lock.l_type = F_UNLCK;
       lock.l_start = 0;
       lock.l_whence = SEEK_SET;
       lock.l_len = 0;
       n = fcntl(fileno(fp), F_SETLK, &lock);
+
+      fclose(fp);
    }
 
 #endif
