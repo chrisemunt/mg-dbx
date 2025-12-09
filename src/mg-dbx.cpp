@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2019-2025 MGateway Ltd                                     |
+   | Copyright (c) 2019-2026 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -184,6 +184,10 @@ Version 2.4.29 21 May 2024:
 Version 2.4.30 29 May 2025:
    Verify that mg-dbx will build and work with Node.js v24.x.x. (ABI: 137).
 
+Version 2.4.31 9 December 2025:
+   Correct a potential memory access violation in the dbx.setloglevel() method.
+   Correct a potential memory access violation in the mclass.reset() method.
+
 */
 
 
@@ -287,7 +291,12 @@ void DBX_DBNAME::Init(Handle<Object> exports)
 {
 
 #if DBX_NODE_VERSION >= 120000
+/* v2.4.31 */
+#if DBX_NODE_VERSION >= 250000
+   Isolate* isolate = Isolate::GetCurrent();
+#else
    Isolate* isolate = exports->GetIsolate();
+#endif
    Local<Context> icontext = isolate->GetCurrentContext();
 
    Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
@@ -692,7 +701,7 @@ void DBX_DBNAME::Version(const FunctionCallbackInfo<Value>& args)
 /* v2.1.17 */
 void DBX_DBNAME::SetLogLevel(const FunctionCallbackInfo<Value>& args)
 {
-   int js_narg;
+   int js_narg, len;
    char buffer[256];
    DBXCON *pcon;
    Local<String> str;
@@ -710,39 +719,49 @@ void DBX_DBNAME::SetLogLevel(const FunctionCallbackInfo<Value>& args)
 
    js_narg = args.Length();
 
+   /* 2.4.31 check length of arguments supplied */
    if (js_narg > 0) {
       str = DBX_TO_STRING(args[0]);
-      DBX_WRITE_UTF8(str, buffer, sizeof(buffer));
-      if (buffer[0]) {
-         strcpy(pcon->log_file, buffer);
+      len = dbx_string8_length(isolate, str, 1);
+      if (len < 250) {
+         DBX_WRITE_UTF8(str, buffer, sizeof(buffer));
+         if (buffer[0]) {
+            strcpy(pcon->log_file, buffer);
+         }
       }
    }
    if (js_narg > 1) {
       str = DBX_TO_STRING(args[1]);
-      DBX_WRITE_UTF8(str, buffer, sizeof(buffer));
-      dbx_lcase(buffer);
-      if (strstr(buffer, "e")) {
-         pcon->log_errors = 1;
-      }
-      if (strstr(buffer, "f")) {
-         pcon->log_functions = 1;
-      }
-      if (strstr(buffer, "t")) {
-         if (!pcon->log_transmissions) {
-            pcon->log_transmissions = 1;
+      len = dbx_string8_length(isolate, str, 1);
+      if (len < 250) {
+         DBX_WRITE_UTF8(str, buffer, sizeof(buffer));
+         dbx_lcase(buffer);
+         if (strstr(buffer, "e")) {
+            pcon->log_errors = 1;
          }
-      }
-      if (strstr(buffer, "r")) { /* v2.2.22 */
-         pcon->log_transmissions = 2;
+         if (strstr(buffer, "f")) {
+            pcon->log_functions = 1;
+         }
+         if (strstr(buffer, "t")) {
+            if (!pcon->log_transmissions) {
+               pcon->log_transmissions = 1;
+            }
+         }
+         if (strstr(buffer, "r")) { /* v2.2.22 */
+            pcon->log_transmissions = 2;
+         }
       }
    }
    if (js_narg > 2) {
       str = DBX_TO_STRING(args[2]);
-      DBX_WRITE_UTF8(str, buffer, sizeof(buffer));
-      if (buffer[0]) {
-         strcpy(pcon->log_filter, ",");
-         strcpy(pcon->log_filter + 1, buffer);
-         strcat(pcon->log_filter, ",");
+      len = dbx_string8_length(isolate, str, 1);
+      if (len < 250) {
+         DBX_WRITE_UTF8(str, buffer, sizeof(buffer));
+         if (buffer[0]) {
+            strcpy(pcon->log_filter, ",");
+            strcpy(pcon->log_filter + 1, buffer);
+            strcat(pcon->log_filter, ",");
+         }
       }
    }
 
@@ -3600,7 +3619,12 @@ extern "C" NODE_MODULE_EXPORT void
 NODE_MODULE_INITIALIZER(Local<Object> exports,
                         Local<Value> module,
                         Local<Context> context) {
+/* v2.4.31 */
+#if DBX_NODE_VERSION >= 250000
+   Isolate* isolate = Isolate::GetCurrent();
+#else
    Isolate* isolate = context->GetIsolate();
+#endif
 
    /* Create a new instance of dbxAddonData for this instance of the addon. */
    dbxAddonData* data = new dbxAddonData(isolate, exports);

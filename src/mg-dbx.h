@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2019-2025 MGateway Ltd                                     |
+   | Copyright (c) 2019-2026 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "2"
 #define DBX_VERSION_MINOR        "4"
-#define DBX_VERSION_BUILD        "30"
+#define DBX_VERSION_BUILD        "31"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -129,7 +129,7 @@
 #endif
 
 DISABLE_WCAST_FUNCTION_TYPE
-//#include <v8.h>
+#include <v8.h>
 #include <node.h>
 #include <node_buffer.h>
 #include <uv.h>

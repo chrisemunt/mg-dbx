@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2019-2025 MGateway Ltd                                     |
+   | Copyright (c) 2019-2026 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -50,7 +50,12 @@ void mcursor::Init(Handle<Object> exports)
 #endif
 {
 #if DBX_NODE_VERSION >= 120000
+/* v2.4.31 */
+#if DBX_NODE_VERSION >= 250000
+   Isolate* isolate = Isolate::GetCurrent();
+#else
    Isolate* isolate = exports->GetIsolate();
+#endif
    Local<Context> icontext = isolate->GetCurrentContext();
 
    Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);

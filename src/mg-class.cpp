@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2019-2025 MGateway Ltd                                     |
+   | Copyright (c) 2019-2026 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -50,7 +50,12 @@ void mclass::Init(Handle<Object> exports)
 #endif
 {
 #if DBX_NODE_VERSION >= 120000
+/* v2.4.31 */
+#if DBX_NODE_VERSION >= 250000
+   Isolate* isolate = Isolate::GetCurrent();
+#else
    Isolate* isolate = exports->GetIsolate();
+#endif
    Local<Context> icontext = isolate->GetCurrentContext();
 
    Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
@@ -712,7 +717,7 @@ void mclass::GetPropertyEx(const FunctionCallbackInfo<Value>& args, int binary)
 void mclass::Reset(const FunctionCallbackInfo<Value>& args)
 {
    short async;
-   int rc;
+   int rc, len;
    char class_name[256];
    DBXCON *pcon;
    DBXMETH *pmeth;
@@ -742,6 +747,12 @@ void mclass::Reset(const FunctionCallbackInfo<Value>& args)
    }
 
    cname = DBX_TO_STRING(args[0]);
+   len = dbx_string8_length(isolate, cname, 1);
+   if (len > 250) { /* 2.4.31 */
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Invalid class name given for the class:reset method (oversize class name)", 1)));
+      dbx_request_memory_free(pcon, pmeth, 0);
+      return;
+   }
    dbx_write_char8(isolate, cname, class_name, sizeof(class_name), pcon->utf8);
    if (class_name[0] == '\0') {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The class:reset method takes at least one argument (the class name)", 1)));

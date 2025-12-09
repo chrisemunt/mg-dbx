@@ -3,7 +3,7 @@
    | mg-dbx.node                                                              |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2019-2025 MGateway Ltd                                     |
+   | Copyright (c) 2019-2026 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -50,7 +50,12 @@ void mglobal::Init(Handle<Object> exports)
 #endif
 {
 #if DBX_NODE_VERSION >= 120000
+/* v2.4.31 */
+#if DBX_NODE_VERSION >= 250000
+   Isolate* isolate = Isolate::GetCurrent();
+#else
    Isolate* isolate = exports->GetIsolate();
+#endif
    Local<Context> icontext = isolate->GetCurrentContext();
 /*
    Local<ObjectTemplate> mglobal_data_tpl = ObjectTemplate::New(isolate);
@@ -1272,7 +1277,7 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
          ismglobal = 0;
          fc = obj->InternalFieldCount();
          if (fc == 3) {
-/* cmtxxx */
+/* 2.4.29 */
 #if DBX_NODE_VERSION >= 220000
             mn = obj->GetInternalField(2).As<v8::Value>().As<v8::External>()->Int32Value(icontext).FromJust();
 #else
