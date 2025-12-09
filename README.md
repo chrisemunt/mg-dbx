@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-29 May 2025, MGateway Ltd [http://www.mgateway.com](http://www.mgateway.com)
+9 December 2025, MGateway Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v24.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -1027,7 +1027,7 @@ Logging can be switched off by calling the **setloglevel** function without spec
 
 ## <a name="License"></a> License
 
-Copyright (c) 2018-2025 MGateway Ltd,
+Copyright (c) 2018-2026 MGateway Ltd,
 Surrey UK.                                                      
 All rights reserved.
  
@@ -1237,3 +1237,9 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v2.4.30 (29 May 2025)
 
 * Verify that **mg-dbx** will build and work with Node.js v24.x.x.
+
+### v2.4.31 (9 December 2025)
+
+* Correct a potential memory access violation in the **dbx.setloglevel()** method.
+* Correct a potential memory access violation in the **mclass.reset()** method.
+
