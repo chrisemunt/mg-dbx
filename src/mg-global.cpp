@@ -274,6 +274,7 @@ void mglobal::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
    DBX_DBFUN_START(c, pcon, pmeth);
 
    rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::get");
@@ -385,6 +386,7 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon, pmeth);
 
    rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::set");
@@ -489,6 +491,7 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon, pmeth);
 
    rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::defined");
@@ -592,6 +595,7 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon, pmeth);
 
    rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::delete");
@@ -695,6 +699,7 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon, pmeth);
 
    rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::next");
@@ -797,6 +802,7 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon, pmeth);
 
    rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::previous");
@@ -900,6 +906,7 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
 
    pmeth->increment = 1;
    rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::increment");
@@ -1009,6 +1016,7 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
 
    pmeth->lock = 1;
    rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::lock");
@@ -1138,6 +1146,7 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
 
    pmeth->lock = 2;
    rc = c->GlobalReference(c, args, pmeth, &gref, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) "mglobal::unlock");

@@ -188,6 +188,12 @@ Version 2.4.31 9 December 2025:
    Correct a potential memory access violation in the dbx.setloglevel() method.
    Correct a potential memory access violation in the mclass.reset() method.
 
+Version 2.5.32 8 February 2026:
+   Introduce a basic sanity check for M global names.  Check that non-printable characters are not included in the name.
+   Correct a fault in setting extra long string values in M Globals.
+      The fault occurred for strings longer than 32,767 Bytes (The old default limit for Cache databases).
+      Newer Cache configurations and IRIS can accept strings of up to 3,641,144 Bytes in length.
+
 */
 
 
@@ -1464,6 +1470,12 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
       n ++;
    }
 
+/* v2.5.32
+   rc = pcon->utf16 ? dbx_validate_name(pmeth, (void *) pmeth->args[nx].cvalue.buf16_addr, (int) pmeth->args[nx].cvalue.len_used, pcon->utf16, 0) : dbx_validate_name(pmeth, (void *) pmeth->args[nx].svalue.buf_addr, (int) pmeth->args[nx].svalue.len_used, pcon->utf16, 0);
+   if (rc != CACHE_SUCCESS) {
+      return rc;
+   }
+
    if (pcon->dbtype != DBX_DBTYPE_YOTTADB && context == 0) {
       if (pmeth->lock) {
          rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushLockW((int) pmeth->args[nx].cvalue.len_used, (unsigned short *) pmeth->args[nx].cvalue.buf16_addr) : pcon->p_isc_so->p_CachePushLock((int) pmeth->args[nx].svalue.len_used, (Callin_char_t *) pmeth->args[nx].svalue.buf_addr);
@@ -1483,6 +1495,10 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
          }
       }
    }
+   if (rc != CACHE_SUCCESS) {
+      return rc;
+   }
+*/
 
    nx ++;
    if (pgref && (pval = pgref->pkey)) {
@@ -1511,10 +1527,11 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
    printf("\r\n pval->type=%d; pval->num.int32=%d; pval->svalue.buf_addr=%s", pval->type, pval->num.int32, buffer);
 }
 */
-
+/* v2.5.32
          if (pcon->dbtype != DBX_DBTYPE_YOTTADB && context == 0) {
             rc = dbx_reference(pmeth, nx);
          }
+*/
          nx ++;
          pval = pval->pnext;
       }
@@ -1555,6 +1572,7 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
          }
          else if (!pcon->utf16 && pmeth->args[nx].svalue.len_used < 32) {
             T_STRNCPY(buffer, _dbxso(buffer), pmeth->args[nx].svalue.buf_addr, pmeth->args[nx].svalue.len_used);
+            buffer[pmeth->args[nx].svalue.len_used] = '\0';
          }
          else {
             buffer[0] = '1';
@@ -1563,11 +1581,10 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
          pmeth->args[nx].type = DBX_DTYPE_DOUBLE;
          pmeth->args[nx].num.real = (double) strtod(buffer, NULL);
       }
-
+/* v2.5.32
       if (pcon->dbtype != DBX_DBTYPE_YOTTADB && context == 0) {
-
          if (pmeth->lock == 1) {
-            if (n < (pmeth->argc - 1)) { /* don't push lock timeout */
+            if (n < (pmeth->argc - 1)) {
                rc = dbx_reference(pmeth, nx);
             }
          }
@@ -1575,9 +1592,55 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
             rc = dbx_reference(pmeth, nx);
          }
       }
+*/
    }
 
    pmeth->cargc = nx;
+
+   /* v2.5.32 */
+   if (pcon->dbtype != DBX_DBTYPE_YOTTADB && context == 0) {
+      rc = dbx_global_reference(pmeth);
+#if 0
+      nx = 0;
+      rc = pcon->utf16 ? dbx_validate_name(pmeth, (void *) pmeth->args[nx].cvalue.buf16_addr, (int) pmeth->args[nx].cvalue.len_used, pcon->utf16, 0) : dbx_validate_name(pmeth, (void *) pmeth->args[nx].svalue.buf_addr, (int) pmeth->args[nx].svalue.len_used, pcon->utf16, 0);
+      if (rc != CACHE_SUCCESS) {
+         return rc;
+      }
+
+      if (pmeth->lock) {
+         rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushLockW((int) pmeth->args[nx].cvalue.len_used, (unsigned short *) pmeth->args[nx].cvalue.buf16_addr) : pcon->p_isc_so->p_CachePushLock((int) pmeth->args[nx].svalue.len_used, (Callin_char_t *) pmeth->args[nx].svalue.buf_addr);
+      }
+      else {
+         if (pcon->utf16) {
+            if (pmeth->args[nx].cvalue.buf16_addr[0] == 94)
+               rc = pcon->p_isc_so->p_CachePushGlobalW((int) pmeth->args[nx].cvalue.len_used - 1, (unsigned short *) pmeth->args[nx].cvalue.buf16_addr + 1);
+            else
+               rc = pcon->p_isc_so->p_CachePushGlobalW((int) pmeth->args[nx].cvalue.len_used, (unsigned short *) pmeth->args[nx].cvalue.buf16_addr);
+         }
+         else {
+            if (pmeth->args[nx].svalue.buf_addr[0] == '^')
+               rc = pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[nx].svalue.len_used - 1, (Callin_char_t *) pmeth->args[nx].svalue.buf_addr + 1);
+            else
+               pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[nx].svalue.len_used, (Callin_char_t *) pmeth->args[nx].svalue.buf_addr);
+         }
+      }
+
+      if (rc != CACHE_SUCCESS) {
+         return rc;
+      }
+
+      for (nx = 1; nx < pmeth->cargc; nx ++) {
+         if (pmeth->lock == 1) {
+            if (nx < (pmeth->cargc - 1)) { /* don't push lock timeout */
+               rc = dbx_reference(pmeth, nx);
+            }
+         }
+         else {
+            rc = dbx_reference(pmeth, nx);
+         }
+      }
+#endif
+   }
 
    return rc;
 }
@@ -1630,6 +1693,7 @@ void DBX_DBNAME::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
    DBX_DBFUN_START(c, pcon, pmeth);
 
    rc = GlobalReference(c, args, pmeth, NULL, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) DBX_DBNAME_STR "::get");
@@ -1740,6 +1804,7 @@ void DBX_DBNAME::Set(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon, pmeth);
 
    rc = GlobalReference(c, args, pmeth, NULL, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) DBX_DBNAME_STR "::set");
@@ -1837,6 +1902,7 @@ void DBX_DBNAME::Defined(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon, pmeth);
 
    rc = GlobalReference(c, args, pmeth, NULL, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) DBX_DBNAME_STR "::defined");
@@ -1935,6 +2001,7 @@ void DBX_DBNAME::Delete(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon, pmeth);
 
    rc = GlobalReference(c, args, pmeth, NULL, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) DBX_DBNAME_STR "::delete");
@@ -2032,6 +2099,7 @@ void DBX_DBNAME::Next(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon, pmeth);
 
    rc = GlobalReference(c, args, pmeth, NULL, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) DBX_DBNAME_STR "::next");
@@ -2128,6 +2196,7 @@ void DBX_DBNAME::Previous(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_START(c, pcon, pmeth);
 
    rc = GlobalReference(c, args, pmeth, NULL, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) DBX_DBNAME_STR "::previous");
@@ -2226,6 +2295,7 @@ void DBX_DBNAME::Increment(const FunctionCallbackInfo<Value>& args)
 
    pmeth->increment = 1;
    rc = GlobalReference(c, args, pmeth, NULL, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) DBX_DBNAME_STR "::increment");
@@ -2325,6 +2395,7 @@ void DBX_DBNAME::Lock(const FunctionCallbackInfo<Value>& args)
 
    pmeth->lock = 1;
    rc = GlobalReference(c, args, pmeth, NULL, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) DBX_DBNAME_STR "::lock");
@@ -2449,6 +2520,7 @@ void DBX_DBNAME::Unlock(const FunctionCallbackInfo<Value>& args)
 
    pmeth->lock = 2;
    rc = GlobalReference(c, args, pmeth, NULL, (async || pcon->net_connection || pcon->tlevel));
+   DBX_DB_CHECK(rc);
 
    if (pcon->log_transmissions) {
       dbx_log_transmission(pcon, pmeth, (char *) DBX_DBNAME_STR "::unlock");
@@ -7286,7 +7358,6 @@ __try {
       if (pcon->p_isc_so && no_connections == 0 && pcon->p_isc_so->multiple_connections == 0) { /* v2.0.16 */
 
          if (pcon->p_isc_so->loaded) {
-            /* pcon->p_isc_so->p_CacheEnd(); */
             pcon->p_isc_so->p_CacheEnd();
             dbx_dso_unload(pcon->p_isc_so->p_library);
             pcon->p_isc_so->p_library = NULL;
@@ -7530,25 +7601,32 @@ __try {
    for (n = 0; n < pmeth->cargc; n ++) {
 
       if (n == 0) {
-         if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
-            if (pmeth->lock) {
-               rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushLockW((int) pmeth->args[n].cvalue.len_used, (unsigned short *) pmeth->args[n].cvalue.buf16_addr) : pcon->p_isc_so->p_CachePushLock((int) pmeth->args[n].svalue.len_used, (Callin_char_t *) pmeth->args[n].svalue.buf_addr);
+
+         /* v2.5.32 */
+         rc = pcon->utf16 ? dbx_validate_name(pmeth, (void *) pmeth->args[n].cvalue.buf16_addr, (int) pmeth->args[n].cvalue.len_used, pcon->utf16, 0) : dbx_validate_name(pmeth, (void *) pmeth->args[n].svalue.buf_addr, (int) pmeth->args[n].svalue.len_used, pcon->utf16, 0);
+         if (rc != CACHE_SUCCESS) {
+            break;
+         }
+         if (pmeth->lock) {
+            rc = pcon->utf16 ? pcon->p_isc_so->p_CachePushLockW((int) pmeth->args[n].cvalue.len_used, (unsigned short *) pmeth->args[n].cvalue.buf16_addr) : pcon->p_isc_so->p_CachePushLock((int) pmeth->args[n].svalue.len_used, (Callin_char_t *) pmeth->args[n].svalue.buf_addr);
+         }
+         else {
+            if (pcon->utf16) {
+               if (pmeth->args[n].cvalue.buf16_addr[0] == 94)
+                  rc = pcon->p_isc_so->p_CachePushGlobalW((int) pmeth->args[n].cvalue.len_used - 1, (unsigned short *) pmeth->args[n].cvalue.buf16_addr + 1);
+               else
+                  rc = pcon->p_isc_so->p_CachePushGlobalW((int) pmeth->args[n].cvalue.len_used, (unsigned short *) pmeth->args[n].cvalue.buf16_addr);
             }
             else {
-               if (pcon->utf16) {
-                  if (pmeth->args[n].cvalue.buf16_addr[0] == 94)
-                     rc = pcon->p_isc_so->p_CachePushGlobalW((int) pmeth->args[n].cvalue.len_used - 1, (unsigned short *) pmeth->args[n].cvalue.buf16_addr + 1);
-                  else
-                     rc = pcon->p_isc_so->p_CachePushGlobalW((int) pmeth->args[n].cvalue.len_used, (unsigned short *) pmeth->args[n].cvalue.buf16_addr);
-               }
-               else {
-                  if (pmeth->args[n].svalue.buf_addr[0] == '^')
-                     rc = pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[n].svalue.len_used - 1, (Callin_char_t *) pmeth->args[n].svalue.buf_addr + 1);
-                  else
-                     pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[n].svalue.len_used, (Callin_char_t *) pmeth->args[n].svalue.buf_addr);
-               }
+               if (pmeth->args[n].svalue.buf_addr[0] == '^')
+                  rc = pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[n].svalue.len_used - 1, (Callin_char_t *) pmeth->args[n].svalue.buf_addr + 1);
+               else
+                  rc = pcon->p_isc_so->p_CachePushGlobal((int) pmeth->args[n].svalue.len_used, (Callin_char_t *) pmeth->args[n].svalue.buf_addr);
             }
          }
+         if (rc != CACHE_SUCCESS) {
+            break;
+         } 
          continue;
       }
 
@@ -7560,6 +7638,9 @@ __try {
       else {
          rc = dbx_reference(pmeth, n);
       }
+      if (rc != CACHE_SUCCESS) {
+         break;
+      } 
    }
    return rc;
 
@@ -7602,7 +7683,6 @@ __try {
    }
 
    rc = dbx_global_reference(pmeth);
-
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
       goto dbx_get_exit;
@@ -7671,7 +7751,6 @@ __try {
    }
 
    rc = dbx_global_reference(pmeth);
-
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc);
       goto dbx_set_exit;
@@ -8247,6 +8326,8 @@ int dbx_merge(DBXMETH *pmeth)
 #ifdef _WIN32
 __try {
 #endif
+
+   rc = CACHE_SUCCESS;
 
    DBX_DB_LOCK(0);
 
@@ -10634,6 +10715,69 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
 }
 
 
+/* v2.5.32 */
+int dbx_validate_name(DBXMETH *pmeth, void * pbuffer, int buffer_len, short char16, short context)
+{
+   int rc, n;
+   unsigned char c, *p, *pz;
+
+   rc = CACHE_SUCCESS;
+   if (char16) { /* TODO */
+      return rc;
+   }
+
+   p = (unsigned char *) pbuffer;
+   pz = (unsigned char *) ((unsigned char *) pbuffer + buffer_len);
+   n = 0;
+
+   if (strstr((char *) p, "[")) {
+      p = (unsigned char *) strstr((char *) p, "]");
+      if (!p) {
+         /* printf("dbx_validate_name: Invalid extended reference"); */
+         return CACHE_BAD_GLOBAL;
+      }
+   }
+   if (*p == '^') {
+      p ++;
+   }
+
+   c = (int) *p;
+   if (!((c == 37) || dbx_isalpha((int) c))) {
+      /* printf("dbx_validate_name: Invalid name - must begin with an alphabetic or '%%' (%d:%c)", (int) c, (char) c); */
+      return CACHE_BAD_GLOBAL;
+   }
+   else {
+      p ++;
+   }
+   c = (int) *(pz - 1);
+   if (!(isdigit((int) c) || dbx_isalpha((int) c))) {
+      /* printf("dbx_validate_name: Invalid name - must end with an alphanumeric (%d:%c)", (int) c, (char) c); */
+      return CACHE_BAD_GLOBAL;
+   }
+
+   /* Just test for control characters for now */
+   while (p < pz) {
+      c = (int) *p;
+      if (((int) c) < 32) {
+         /* printf("dbx_validate_name: Invalid name - must contain alphanumerics or '.' (%d:%c)", (int) c, (char) c); */
+         rc = CACHE_BAD_GLOBAL;
+         break;
+      }
+      p ++;
+   }
+/*
+   while (p < pz) {
+      c = (int) *p;
+      if (!((*p == '.') || isdigit((int) c) || dbx_isalpha((int) c))) {
+         printf("dbx_validate_name: Invalid name - must contain alphanumerics or '.' (%d:%c)", (int) c, (char) c);
+         rc = CACHE_BAD_GLOBAL;
+         break;
+      }
+      p ++;
+   }
+*/
+   return rc;
+}
 
 int cache_report_failure(DBXCON *pcon)
 {
@@ -11159,6 +11303,24 @@ int dbx_lcase(char *string)
    return 1;
 
 #endif
+}
+
+/* v2.5.32 */
+int dbx_isalpha(int c)
+{
+   if (isalpha(c))
+      return 1;
+   else if (c == 170)
+      return 1;
+   else if (c == 181)
+      return 1;
+   else if (c == 186)
+      return 1;
+   else if (c >= 192 && c <= 255)
+      return 1;
+   else
+      return 0;
+   return 0;
 }
 
 

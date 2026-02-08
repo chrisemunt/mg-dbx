@@ -32,8 +32,8 @@
 #define DBX_NODE_VERSION         (NODE_MAJOR_VERSION * 10000) + (NODE_MINOR_VERSION * 100) + NODE_PATCH_VERSION
 
 #define DBX_VERSION_MAJOR        "2"
-#define DBX_VERSION_MINOR        "4"
-#define DBX_VERSION_BUILD        "31"
+#define DBX_VERSION_MINOR        "5"
+#define DBX_VERSION_BUILD        "32"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -702,6 +702,17 @@ typedef struct {
 #define YDB_TPCTX_QUERY    11
 #define YDB_TPCTX_ORDER    12
 
+/* v2.5.32 */
+
+#define DBX_DB_CHECK(RC) \
+   if (RC != CACHE_SUCCESS) { \
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Invalid global name", 1))); \
+      DBX_DBFUN_END(c); \
+      DBX_DB_UNLOCK(); \
+      dbx_request_memory_free(pcon, pmeth, 0); \
+      return; \
+   } \
+
 typedef struct {
    unsigned int   len_alloc;
    unsigned int   len_used;
@@ -1285,6 +1296,7 @@ int                        dbx_global_order              (DBXMETH *pmeth, DBXQR 
 int                        dbx_global_query              (DBXMETH *pmeth, DBXQR *pqr_next, DBXQR *pqr_prev, short dir, short getdata);
 int                        dbx_parse_global_reference    (DBXMETH *pmeth, DBXQR *pqr, char *global_ref, int global_ref_len);
 int                        dbx_parse_global_reference16  (DBXMETH *pmeth, DBXQR *pqr, unsigned short *global_ref, int global_ref_len);
+int                        dbx_validate_name             (DBXMETH *pmeth, void * pbuffer, int buffer_len, short char16, short context);
 
 int                        dbx_launch_thread             (DBXMETH *pmeth);
 #if defined(_WIN32)
@@ -1310,6 +1322,7 @@ DBXQR *                    dbx_alloc_dbxqr               (DBXQR *pqr, int dsize,
 int                        dbx_free_dbxqr                (DBXQR *pqr);
 int                        dbx_ucase                     (char *string);
 int                        dbx_lcase                     (char *string);
+int                        dbx_isalpha                   (int c);
 
 int                        dbx_create_string             (DBXSTR *pstr, void *data, short type);
 
