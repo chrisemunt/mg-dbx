@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-8 February 2026, MGateway Ltd [http://www.mgateway.com](http://www.mgateway.com)
+18 February 2026, MGateway Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v8 to v24.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
@@ -1250,4 +1250,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 	* The fault occurred for strings longer than 32,767 Bytes (The old default limit for Cache databases).
 	* Newer Cache configurations and IRIS can accept strings of up to 3,641,144 Bytes in length.
 
+### v2.5.33 (18 February 2025)
+
+* Correct a buffer sizing issue affecting Node.js v24 (and later).
 
