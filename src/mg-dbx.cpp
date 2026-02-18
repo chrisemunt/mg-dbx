@@ -194,6 +194,9 @@ Version 2.5.32 8 February 2026:
       The fault occurred for strings longer than 32,767 Bytes (The old default limit for Cache databases).
       Newer Cache configurations and IRIS can accept strings of up to 3,641,144 Bytes in length.
 
+Version 2.5.33 18 February 2026:
+   Correct a buffer sizing issue affecting Node.js v24 (and later).
+
 */
 
 
@@ -4330,7 +4333,8 @@ __try {
    str = DBX_TO_STRING(args[argc_offset]);
    global_name16_len = 0;
    global_name_len = dbx_string8_length(isolate, str, pcon->utf8);
-   dbx_write_char8(isolate, str, global_name, 256, pcon->utf8);
+   dbx_write_char8(isolate, str, global_name, 266, pcon->utf8);
+
    if (global_name_len == 0) {
       return -1;
    }
@@ -4419,8 +4423,8 @@ __try {
                pval->cvalue.buf16_addr = (unsigned short *) dbx_malloc(sizeof(unsigned short) * (len + 32), 0);
                pval->type = DBX_DTYPE_STR16;
                pval->svalue.buf_addr = NULL;
+               pval->cvalue.len_alloc = len + 32; /* v2.5.33 */
                dbx_write_char16(isolate, str, pval->cvalue.buf16_addr);
-               pval->cvalue.len_alloc = len + 32;
                pval->cvalue.len_used = len;
             }
             else {
@@ -4429,8 +4433,8 @@ __try {
                pval->cvalue.buf16_addr = NULL;
                pval->type = DBX_DTYPE_STR;
                pval->svalue.buf_addr = ((char *) pval) + sizeof(DBXVAL);
+               pval->svalue.len_alloc = len + 32; /* v2.5.33 */
                dbx_write_char8(isolate, str, pval->svalue.buf_addr, pval->svalue.len_alloc, 1);
-               pval->svalue.len_alloc = len + 32;
                pval->svalue.len_used = len;
             }
          }
