@@ -1254,7 +1254,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 * Correct a buffer sizing issue affecting Node.js v24 (and later).
 
-### v2.5.33a (24 May 2026)
+### v2.5.34 (24 May 2026)
 
 * Verify that **mg-dbx** will build and work with Node.js v26.x.x.
 
