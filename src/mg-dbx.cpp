@@ -197,6 +197,9 @@ Version 2.5.32 8 February 2026:
 Version 2.5.33 18 February 2026:
    Correct a buffer sizing issue affecting Node.js v24 (and later).
 
+Version 2.5.33a 24 May 2026:
+   Verify that mg-dbx will build and work with Node.js v26.x.x. (ABI: 147).
+
 */
 
 
