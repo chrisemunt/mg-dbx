@@ -3,9 +3,9 @@
 High speed Synchronous and Asynchronous access to InterSystems Cache/IRIS and YottaDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-18 February 2026, MGateway Ltd [http://www.mgateway.com](http://www.mgateway.com)
+24 May 2026, MGateway Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* Verified to work with Node.js v8 to v24.
+* Verified to work with Node.js v8 to v26.
 * Two connectivity models to the InterSystems or YottaDB database are provided: High performance via the local database API or network based.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
@@ -1253,4 +1253,8 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v2.5.33 (18 February 2025)
 
 * Correct a buffer sizing issue affecting Node.js v24 (and later).
+
+### v2.5.33a (24 May 2026)
+
+* Verify that **mg-dbx** will build and work with Node.js v26.x.x.
 
