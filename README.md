@@ -1258,3 +1258,10 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 * Verify that **mg-dbx** will build and work with Node.js v26.x.x.
 
+### v2.5.35 (26 July 2026)
+
+* Correct a fault in **reading** extra long string values from YottaDB M Globals.
+	* The fault occurred for values longer than 32,767 Bytes (the legacy `CACHE_MAXSTRLEN` limit used for the per-request output buffer).
+	* On `YDB_ERR_INVSTRLEN` the output buffer is now grown (up to `CACHE_MAXLOSTSZ` = 3,641,144 Bytes, the same ceiling the SET path uses) and the read is retried, instead of returning uninitialised memory.
+	* Fixes the companion fault to v2.5.32, which corrected the **setting** of long strings but left the **get** path capped at 32,767 Bytes.
+
