@@ -269,6 +269,7 @@ int dbx_ydb_get_with_retry(DBXCON *pcon, DBXMETH *pmeth)
    char *p;
 
    rc = pcon->p_ydb_so->p_ydb_get_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], &(pmeth->output_val.svalue));
+   fprintf(stderr, "DBX_RETRY: first rc=%d len_used=%u len_alloc=%u\n", rc, (unsigned int) pmeth->output_val.svalue.len_used, (unsigned int) pmeth->output_val.svalue.len_alloc);
    if (rc != YDB_ERR_INVSTRLEN) {
       return rc;
    }
@@ -290,7 +291,9 @@ int dbx_ydb_get_with_retry(DBXCON *pcon, DBXMETH *pmeth)
    pmeth->output_val.svalue.len_alloc = (unsigned int) needed;
    memset((void *) pmeth->output_val.svalue.buf_addr, 0, (size_t) needed);
 
-   return pcon->p_ydb_so->p_ydb_get_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], &(pmeth->output_val.svalue));
+   rc = pcon->p_ydb_so->p_ydb_get_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], &(pmeth->output_val.svalue));
+   fprintf(stderr, "DBX_RETRY: second rc=%d len_used=%u len_alloc=%u\n", rc, (unsigned int) pmeth->output_val.svalue.len_used, (unsigned int) pmeth->output_val.svalue.len_alloc);
+   return rc;
 }
 
 static void dbxGoingDownSignal(int sig)
