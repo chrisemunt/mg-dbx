@@ -1316,6 +1316,7 @@ unsigned long              dbx_get_block_size            (unsigned char *block, 
 int                        dbx_set_size                  (unsigned char *str, unsigned long data_len);
 unsigned long              dbx_get_size                  (unsigned char *str);
 void *                     dbx_realloc                   (void *p, int curr_size, int new_size, short id);
+int                        dbx_ydb_get_with_retry       (DBXCON *pcon, DBXMETH *pmeth);
 void *                     dbx_malloc                    (int size, short id);
 int                        dbx_free                      (void *p, short id);
 DBXQR *                    dbx_alloc_dbxqr               (DBXQR *pqr, int dsize, short alloc_char16, short context);

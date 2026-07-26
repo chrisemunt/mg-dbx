@@ -262,7 +262,7 @@ using namespace v8;
  */
 #define YDB_ERR_INVSTRLEN  (-150375352)
 
-static int dbx_ydb_get_with_retry(DBXCON *pcon, DBXMETH *pmeth)
+int dbx_ydb_get_with_retry(DBXCON *pcon, DBXMETH *pmeth)
 {
    int rc;
    int needed;
