@@ -260,7 +260,7 @@ using namespace v8;
  * CACHE_MAXLOSTSZ, the same ceiling the SET path uses) and retry.  This mirrors
  * the re-allocation already done in the network path (mg-net.cpp).
  */
-#define YDB_ERR_INVSTRLEN  (-150375352)
+#define YDB_ERR_INVSTRLEN  (-150375522)
 
 int dbx_ydb_get_with_retry(DBXCON *pcon, DBXMETH *pmeth)
 {
