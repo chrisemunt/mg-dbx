@@ -279,6 +279,8 @@ int dbx_ydb_get_with_retry(DBXCON *pcon, DBXMETH *pmeth)
    if (needed <= (int) pmeth->output_val.svalue.len_alloc) {
       return rc;
    }
+   /* YottaDB also writes a trailing NUL, so leave one extra byte of headroom. */
+   needed += 1;
    if (needed > CACHE_MAXLOSTSZ) {
       needed = CACHE_MAXLOSTSZ;
    }
