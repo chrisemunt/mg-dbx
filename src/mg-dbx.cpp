@@ -249,6 +249,52 @@ DBXMUTEX    mutex_global;
 using namespace node;
 using namespace v8;
 
+/* v2.5.35
+ * YottaDB get with INVSTRLEN retry.
+ *
+ * The per-request output buffer is allocated from CACHE_MAXSTRLEN (32767 bytes)
+ * in dbx_request_memory_alloc().  When the stored value is larger than that,
+ * ydb_get_s() returns YDB_ERR_INVSTRLEN and leaves the buffer untouched, so the
+ * caller would otherwise receive uninitialised heap memory.  On INVSTRLEN we
+ * grow the output buffer to the size YottaDB reports it needs (capped at
+ * CACHE_MAXLOSTSZ, the same ceiling the SET path uses) and retry.  This mirrors
+ * the re-allocation already done in the network path (mg-net.cpp).
+ */
+#define YDB_ERR_INVSTRLEN  (-150375522)
+
+int dbx_ydb_get_with_retry(DBXCON *pcon, DBXMETH *pmeth)
+{
+   int rc;
+   int needed;
+   char *p;
+
+   rc = pcon->p_ydb_so->p_ydb_get_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], &(pmeth->output_val.svalue));
+   if (rc != YDB_ERR_INVSTRLEN) {
+      return rc;
+   }
+
+   /* YottaDB reports the required length in len_used on INVSTRLEN. */
+   needed = (int) pmeth->output_val.svalue.len_used;
+   if (needed <= (int) pmeth->output_val.svalue.len_alloc) {
+      return rc;
+   }
+   /* YottaDB also writes a trailing NUL, so leave one extra byte of headroom. */
+   needed += 1;
+   if (needed > CACHE_MAXLOSTSZ) {
+      needed = CACHE_MAXLOSTSZ;
+   }
+
+   p = (char *) dbx_realloc((void *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_alloc, needed, 0);
+   if (!p) {
+      return rc;
+   }
+   pmeth->output_val.svalue.buf_addr = p;
+   pmeth->output_val.svalue.len_alloc = (unsigned int) needed;
+   memset((void *) pmeth->output_val.svalue.buf_addr, 0, (size_t) needed);
+
+   return pcon->p_ydb_so->p_ydb_get_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], &(pmeth->output_val.svalue));
+}
+
 static void dbxGoingDownSignal(int sig)
 {
    /* printf("\r\nNode.js process interrupted (signal=%d)", sig); */
@@ -1736,7 +1782,7 @@ void DBX_DBNAME::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
          rc = ydb_transaction_task(pmeth, YDB_TPCTX_DB);
       }
       else {
-         rc = pcon->p_ydb_so->p_ydb_get_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], &(pmeth->output_val.svalue));
+         rc = dbx_ydb_get_with_retry(pcon, pmeth);
       }
    }
    else {
@@ -7696,7 +7742,7 @@ __try {
    }
 
    if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
-      rc = pcon->p_ydb_so->p_ydb_get_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], &(pmeth->output_val.svalue));
+      rc = dbx_ydb_get_with_retry(pcon, pmeth);
    }
    else {
       rc = pcon->p_isc_so->p_CacheGlobalGet(pmeth->cargc - 1, 0); /* 1 for no 'undefined' */

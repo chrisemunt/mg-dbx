@@ -309,7 +309,7 @@ void mglobal::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
          rc = ydb_transaction_task(pmeth, YDB_TPCTX_DB);
       }
       else {
-         rc = pcon->p_ydb_so->p_ydb_get_s(&(pmeth->args[0].svalue), pmeth->cargc - 1, &pmeth->yargs[0], &(pmeth->output_val.svalue));
+         rc = dbx_ydb_get_with_retry(pcon, pmeth);
       }
    }
    else {
